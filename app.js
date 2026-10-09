@@ -384,28 +384,7 @@ async function setupDesktopRuntime() {
     return;
   }
 
-  const [{ appWindow }, { isRegistered, register }] = await Promise.all([
-    import("@tauri-apps/api/window"),
-    import("@tauri-apps/api/globalShortcut"),
-  ]);
-
   state.runtime.isTauri = true;
-
-  if (!(await isRegistered("CmdOrCtrl+K"))) {
-    await register("CmdOrCtrl+K", async () => {
-      if (!(await appWindow.isVisible())) {
-        await appWindow.show();
-      }
-
-      if (await appWindow.isMinimized()) {
-        await appWindow.unminimize();
-      }
-
-      await appWindow.setFocus();
-      elements.input.focus();
-      elements.input.select();
-    });
-  }
 
   updateRuntimeBadge();
 }
