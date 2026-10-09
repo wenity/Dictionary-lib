@@ -70,6 +70,7 @@ const elements = {
   closeSettingsBtn: document.getElementById("closeSettingsBtn"),
   serviceEndpoint:
     document.getElementById("serviceEndpoint") ?? document.getElementById("localEndpoint"),
+  serviceEndpointLabel: document.getElementById("serviceEndpointLabel"),
   modelName: document.getElementById("modelName"),
   apiKey: document.getElementById("apiKey"),
   modeBadge: document.getElementById("modeBadge"),
@@ -117,6 +118,19 @@ const state = {
     cards: [],
     currentCardId: null,
     isFlipped: false,
+  },
+};
+
+const providerCopy = {
+  local: {
+    serviceEndpointLabel: "本地模型服务地址（可省略 /v1）",
+    helperText:
+      "本地模式会调用你填写的 OpenAI 兼容服务地址，系统会自动补全 /v1；通常只需要填写服务地址和模型名称。连通性测试不验证模型生成能力。快捷键为 Ctrl / ⌘ + K。",
+  },
+  api: {
+    serviceEndpointLabel: "第三方接口地址（可省略 /v1）",
+    helperText:
+      "第三方 API Key 模式需要填写接口地址、模型名称和 API Key；系统会自动补全 /v1。连通性测试不验证模型生成能力。快捷键为 Ctrl / ⌘ + K。",
   },
 };
 
@@ -528,10 +542,20 @@ function updateSettingsHelperText() {
     return;
   }
 
-  elements.settingsHelperText.textContent =
-    state.provider === "local"
-      ? "本地模式会调用你填写的 OpenAI 兼容服务地址，系统会自动补全 /v1；模型名称请手动填写。连通性测试不验证模型生成能力。快捷键为 Ctrl / ⌘ + K。"
-      : "API Key 模式会把同一服务地址作为云端模型入口，系统会自动补全 /v1；模型名称请手动填写。连通性测试不验证模型生成能力。快捷键为 Ctrl / ⌘ + K。";
+  elements.settingsHelperText.textContent = providerCopy[state.provider].helperText;
+}
+
+function updateSettingsProviderFields() {
+  const copy = providerCopy[state.provider];
+
+  if (elements.serviceEndpointLabel) {
+    elements.serviceEndpointLabel.textContent = copy.serviceEndpointLabel;
+  }
+
+  const apiKeyLabel = elements.apiKey?.closest("label");
+  if (apiKeyLabel) {
+    apiKeyLabel.classList.toggle("hidden", state.provider !== "api");
+  }
 }
 
 function updateSettingsPanel(open) {
@@ -645,11 +669,8 @@ function setProvider(provider, { persist = true } = {}) {
     tab.classList.toggle("active", tab.dataset.provider === provider);
   });
 
-  if (elements.apiKey) {
-    elements.apiKey.closest("label").style.opacity = provider === "local" ? "0.55" : "1";
-  }
-
   renderProviderLabel();
+  updateSettingsProviderFields();
   updateSettingsHelperText();
 
   if (persist) {
