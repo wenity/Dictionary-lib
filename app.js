@@ -76,9 +76,30 @@ const elements = {
   providerText: document.getElementById("providerText"),
   settingsHelperText: document.getElementById("settingsHelperText"),
   providerTabs: [...document.querySelectorAll(".tab")],
+  homePage: document.getElementById("homePage"),
+  flashcardsPage: document.getElementById("flashcardsPage"),
+  flashcardsBtn: document.getElementById("flashcardsBtn"),
+  backHomeBtn: document.getElementById("backHomeBtn"),
+  flashcardCountBadge: document.getElementById("flashcardCountBadge"),
+  flashcardsHelperText: document.getElementById("flashcardsHelperText"),
+  flashcardEmptyState: document.getElementById("flashcardEmptyState"),
+  flashcardCard: document.getElementById("flashcardCard"),
+  flashcardSourceBadge: document.getElementById("flashcardSourceBadge"),
+  flashcardProgressText: document.getElementById("flashcardProgressText"),
+  flashcardFaceLabel: document.getElementById("flashcardFaceLabel"),
+  flashcardFrontText: document.getElementById("flashcardFrontText"),
+  flashcardBackText: document.getElementById("flashcardBackText"),
+  flashcardTranslationText: document.getElementById("flashcardTranslationText"),
+  flashcardReviewCountText: document.getElementById("flashcardReviewCountText"),
+  flashcardUpdatedText: document.getElementById("flashcardUpdatedText"),
+  flashcardList: document.getElementById("flashcardList"),
+  prevFlashcardBtn: document.getElementById("prevFlashcardBtn"),
+  flipFlashcardBtn: document.getElementById("flipFlashcardBtn"),
+  nextFlashcardBtn: document.getElementById("nextFlashcardBtn"),
 };
 
 const SETTINGS_STORAGE_KEY = "dictionary-lib.settings";
+const FLASHCARDS_STORAGE_KEY = "dictionary-lib.flashcards";
 const defaultSettings = {
   provider: "local",
   serviceEndpoint: DEFAULT_SERVICE_ENDPOINT,
@@ -88,8 +109,14 @@ const defaultSettings = {
 
 const state = {
   provider: defaultSettings.provider,
+  view: "home",
   runtime: {
     isTauri: false,
+  },
+  flashcards: {
+    cards: [],
+    currentCardId: null,
+    isFlipped: false,
   },
 };
 
@@ -146,6 +173,220 @@ function updateRuntimeBadge() {
   elements.modeBadge.style.borderColor = state.runtime.isTauri
     ? "rgba(52, 211, 153, 0.35)"
     : "rgba(148, 163, 184, 0.18)";
+}
+
+function readSavedFlashcards() {
+  const stored = window.localStorage.getItem(FLASHCARDS_STORAGE_KEY);
+
+  if (!stored) {
+    return [];
+  }
+
+  try {
+    const parsed = JSON.parse(stored);
+    if (!Array.isArray(parsed)) {
+      return [];
+    }
+
+    return parsed
+      .filter((card) => card && typeof card === "object")
+      .map((card) => ({
+        id: typeof card.id === "string" && card.id ? card.id : crypto.randomUUID(),
+        query: typeof card.query === "string" ? card.query : "",
+        sourceLang: card.sourceLang === "zh" ? "zh" : "en",
+        translation: typeof card.translation === "string" ? card.translation : "",
+        explanationZh: typeof card.explanationZh === "string" ? card.explanationZh : "",
+        reviewCount: Number.isFinite(Number(card.reviewCount)) ? Number(card.reviewCount) : 1,
+        createdAt: typeof card.createdAt === "string" ? card.createdAt : new Date().toISOString(),
+        updatedAt: typeof card.updatedAt === "string" ? card.updatedAt : new Date().toISOString(),
+      }))
+      .filter((card) => card.query && card.translation);
+  } catch (error) {
+    console.warn("读取闪卡数据失败，使用空资料库。", error);
+    return [];
+  }
+}
+
+function writeSavedFlashcards(cards) {
+  window.localStorage.setItem(FLASHCARDS_STORAGE_KEY, JSON.stringify(cards));
+}
+
+function normalizeCardKey(query, sourceLang) {
+  return `${sourceLang}:${normalize(query)}`;
+}
+
+function sortFlashcards(cards) {
+  return [...cards].sort((left, right) => {
+    const leftTime = new Date(left.updatedAt).getTime();
+    const rightTime = new Date(right.updatedAt).getTime();
+    return rightTime - leftTime;
+  });
+}
+
+function formatFlashcardTime(value) {
+  return new Intl.DateTimeFormat("zh-CN", {
+    dateStyle: "short",
+    timeStyle: "short",
+  }).format(new Date(value));
+}
+
+function escapeHtml(text) {
+  return text.replace(/[&<>"']/g, (character) => {
+    switch (character) {
+      case "&":
+        return "&amp;";
+      case "<":
+        return "&lt;";
+      case ">":
+        return "&gt;";
+      case '"':
+        return "&quot;";
+      case "'":
+        return "&#39;";
+      default:
+        return character;
+    }
+  });
+}
+
+function getFlashcardsStateCards() {
+  return sortFlashcards(state.flashcards.cards);
+}
+
+function getCurrentFlashcardIndex(cards = getFlashcardsStateCards()) {
+  if (cards.length === 0) {
+    return -1;
+  }
+
+  const currentIndex = cards.findIndex((card) => card.id === state.flashcards.currentCardId);
+  return currentIndex >= 0 ? currentIndex : 0;
+}
+
+function getCurrentFlashcard(cards = getFlashcardsStateCards()) {
+  const index = getCurrentFlashcardIndex(cards);
+  return index >= 0 ? cards[index] : null;
+}
+
+function persistFlashcards(cards) {
+  state.flashcards.cards = cards;
+  writeSavedFlashcards(cards);
+}
+
+function selectFlashcardByIndex(index) {
+  const cards = getFlashcardsStateCards();
+
+  if (cards.length === 0) {
+    state.flashcards.currentCardId = null;
+    state.flashcards.isFlipped = false;
+    renderFlashcardsPage();
+    return;
+  }
+
+  const resolvedIndex = (index + cards.length) % cards.length;
+  state.flashcards.currentCardId = cards[resolvedIndex].id;
+  state.flashcards.isFlipped = false;
+  renderFlashcardsPage();
+}
+
+function rememberFlashcard({ query, sourceLang, translation, explanationZh }) {
+  const cards = getFlashcardsStateCards();
+  const key = normalizeCardKey(query, sourceLang);
+  const now = new Date().toISOString();
+  const existingIndex = cards.findIndex((card) => normalizeCardKey(card.query, card.sourceLang) === key);
+  const nextCard = {
+    id: existingIndex >= 0 ? cards[existingIndex].id : crypto.randomUUID(),
+    query,
+    sourceLang,
+    translation,
+    explanationZh: explanationZh ?? "",
+    reviewCount: existingIndex >= 0 ? cards[existingIndex].reviewCount + 1 : 1,
+    createdAt: existingIndex >= 0 ? cards[existingIndex].createdAt : now,
+    updatedAt: now,
+  };
+
+  const nextCards = existingIndex >= 0
+    ? cards.map((card, index) => (index === existingIndex ? nextCard : card))
+    : [nextCard, ...cards];
+
+  persistFlashcards(nextCards);
+  state.flashcards.currentCardId = nextCard.id;
+  state.flashcards.isFlipped = false;
+  renderFlashcardsPage();
+}
+
+function setView(view) {
+  state.view = view;
+  elements.homePage.classList.toggle("hidden", view !== "home");
+  elements.flashcardsPage.classList.toggle("hidden", view !== "flashcards");
+  elements.flashcardsPage.setAttribute("aria-hidden", String(view !== "flashcards"));
+  if (view === "flashcards") {
+    renderFlashcardsPage();
+  }
+}
+
+function renderFlashcardsButtonLabel() {
+  if (!elements.flashcardsBtn || !elements.flashcardCountBadge) {
+    return;
+  }
+
+  const count = getFlashcardsStateCards().length;
+  elements.flashcardsBtn.textContent = count > 0 ? `闪卡（${count}）` : "闪卡";
+  elements.flashcardCountBadge.textContent = `${count} 张卡片`;
+}
+
+function renderFlashcardsPage() {
+  const cards = getFlashcardsStateCards();
+  renderFlashcardsButtonLabel();
+
+  if (!cards.length) {
+    elements.flashcardEmptyState.classList.remove("hidden");
+    elements.flashcardCard.classList.add("hidden");
+    elements.flashcardList.innerHTML = "";
+    elements.flashcardsHelperText.textContent = "先去查几个词，系统会把结果自动收进闪卡资料库。";
+    return;
+  }
+
+  const currentCard = getCurrentFlashcard(cards) ?? cards[0];
+  state.flashcards.currentCardId = currentCard.id;
+
+  elements.flashcardEmptyState.classList.add("hidden");
+  elements.flashcardCard.classList.remove("hidden");
+  elements.flashcardsHelperText.textContent = "点卡片正面翻看释义，日常查词结果会自动沉淀到这里。";
+
+  elements.flashcardSourceBadge.textContent = currentCard.sourceLang === "zh" ? "中文 → 英文" : "英文 → 中文";
+  elements.flashcardProgressText.textContent = `${cards.findIndex((card) => card.id === currentCard.id) + 1} / ${cards.length}`;
+  elements.flashcardFaceLabel.textContent = state.flashcards.isFlipped ? "背面" : "正面";
+  elements.flashcardFrontText.textContent = currentCard.query;
+  elements.flashcardBackText.textContent = currentCard.translation;
+  elements.flashcardBackText.classList.toggle("hidden", !state.flashcards.isFlipped);
+  elements.flashcardFrontText.classList.toggle("hidden", state.flashcards.isFlipped);
+  elements.flashcardTranslationText.textContent = currentCard.translation;
+  elements.flashcardReviewCountText.textContent = String(currentCard.reviewCount);
+  elements.flashcardUpdatedText.textContent = formatFlashcardTime(currentCard.updatedAt);
+
+  elements.flashcardList.innerHTML = cards
+    .map((card, index) => {
+      const active = card.id === currentCard.id ? "active" : "";
+      return `
+        <button type="button" class="flashcard-list-item ${active}" data-card-id="${card.id}">
+          <strong>${escapeHtml(card.query)}</strong>
+          <span>${escapeHtml(card.translation)}</span>
+          <span>${index + 1} · ${card.sourceLang === "zh" ? "中文" : "英文"} · ${card.reviewCount} 次复习</span>
+        </button>
+      `;
+    })
+    .join("");
+
+  elements.flashcardList.querySelectorAll(".flashcard-list-item").forEach((button) => {
+    button.addEventListener("click", () => {
+      const nextIndex = cards.findIndex((card) => card.id === button.dataset.cardId);
+      if (nextIndex >= 0) {
+        state.flashcards.currentCardId = cards[nextIndex].id;
+        state.flashcards.isFlipped = false;
+        renderFlashcardsPage();
+      }
+    });
+  });
 }
 
 function detectLanguage(text) {
@@ -255,6 +496,8 @@ function buildOfflineResult(query) {
   if (entry) {
     return {
       translation: entry.translation,
+      sourceLang: language,
+      explanationZh: entry.explanationZh,
       badge: "命中示例词条",
       tone: "success",
     };
@@ -263,6 +506,8 @@ function buildOfflineResult(query) {
   if (language === "en") {
     return {
       translation: `${query}（中文释义）`,
+      sourceLang: language,
+      explanationZh: "",
       badge: "离线演示",
       tone: "",
     };
@@ -270,6 +515,8 @@ function buildOfflineResult(query) {
 
   return {
     translation: `${query} (English)`,
+    sourceLang: language,
+    explanationZh: "",
     badge: "离线演示",
     tone: "",
   };
@@ -354,6 +601,12 @@ async function runSearch(rawQuery) {
       : buildOfflineResult(query);
 
     elements.translationText.textContent = result.translation;
+    rememberFlashcard({
+      query,
+      sourceLang: result.sourceLang ?? detectLanguage(query),
+      translation: result.translation,
+      explanationZh: result.explanationZh ?? "",
+    });
 
     setVisible("success");
     renderBadge(result.badge ?? "AI 已返回", result.tone ?? "success");
@@ -421,8 +674,45 @@ elements.settingsBtn.addEventListener("click", () => {
   updateSettingsPanel(true);
 });
 
+elements.flashcardsBtn.addEventListener("click", () => {
+  setView("flashcards");
+});
+
+elements.backHomeBtn.addEventListener("click", () => {
+  setView("home");
+  window.setTimeout(() => {
+    elements.input.focus();
+  }, 50);
+});
+
 elements.closeSettingsBtn.addEventListener("click", () => {
   updateSettingsPanel(false);
+});
+
+elements.prevFlashcardBtn.addEventListener("click", () => {
+  const cards = getFlashcardsStateCards();
+  const index = getCurrentFlashcardIndex(cards);
+  if (index >= 0) {
+    selectFlashcardByIndex(index - 1);
+  }
+});
+
+elements.flipFlashcardBtn.addEventListener("click", () => {
+  state.flashcards.isFlipped = !state.flashcards.isFlipped;
+  renderFlashcardsPage();
+});
+
+elements.flashcardCard.addEventListener("click", () => {
+  state.flashcards.isFlipped = !state.flashcards.isFlipped;
+  renderFlashcardsPage();
+});
+
+elements.nextFlashcardBtn.addEventListener("click", () => {
+  const cards = getFlashcardsStateCards();
+  const index = getCurrentFlashcardIndex(cards);
+  if (index >= 0) {
+    selectFlashcardByIndex(index + 1);
+  }
 });
 
 elements.input.addEventListener("keydown", (event) => {
@@ -438,6 +728,35 @@ elements.input.addEventListener("keydown", (event) => {
 });
 
 document.addEventListener("keydown", (event) => {
+  if (state.view === "flashcards" && !event.metaKey && !event.ctrlKey && !event.altKey) {
+    if (event.key === " " || event.key === "Enter") {
+      event.preventDefault();
+      state.flashcards.isFlipped = !state.flashcards.isFlipped;
+      renderFlashcardsPage();
+      return;
+    }
+
+    if (event.key === "ArrowLeft") {
+      event.preventDefault();
+      const cards = getFlashcardsStateCards();
+      const index = getCurrentFlashcardIndex(cards);
+      if (index >= 0) {
+        selectFlashcardByIndex(index - 1);
+      }
+      return;
+    }
+
+    if (event.key === "ArrowRight") {
+      event.preventDefault();
+      const cards = getFlashcardsStateCards();
+      const index = getCurrentFlashcardIndex(cards);
+      if (index >= 0) {
+        selectFlashcardByIndex(index + 1);
+      }
+      return;
+    }
+  }
+
   if (event.key === "Escape") {
     updateSettingsPanel(false);
   }
@@ -456,10 +775,14 @@ async function setupDesktopRuntime() {
 
 async function bootstrap() {
   applySavedSettings();
+  state.flashcards.cards = readSavedFlashcards();
   setVisible("empty");
   updateSettingsPanel(false);
   updateRuntimeBadge();
   updateSettingsHelperText();
+  renderFlashcardsButtonLabel();
+  renderFlashcardsPage();
+  setView("home");
   await setupDesktopRuntime();
 
   window.setTimeout(() => {

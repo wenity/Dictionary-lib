@@ -24,11 +24,14 @@
             <span id="modeBadge" class="badge">浏览器预览</span>
             <span id="providerText" class="badge">本地大模型</span>
           </div>
-          <button id="settingsBtn" type="button" class="secondary-btn">设置</button>
+          <div class="hero-actions">
+            <button id="flashcardsBtn" type="button" class="secondary-btn">闪卡</button>
+            <button id="settingsBtn" type="button" class="secondary-btn">设置</button>
+          </div>
         </div>
       </header>
 
-      <main class="layout">
+      <main id="homePage" class="layout">
         <section class="panel panel-left">
           <div class="panel-head">
             <div>
@@ -89,6 +92,76 @@
           </div>
         </section>
       </main>
+
+      <section id="flashcardsPage" class="flashcards-page hidden" aria-hidden="true">
+        <section class="panel flashcards-panel">
+          <div class="panel-head">
+            <div>
+              <p class="section-label">闪卡</p>
+              <h2>来自日常查词内容的记忆卡片</h2>
+              <p id="flashcardsHelperText" class="helper-text">系统会把你查询过的词条保存为闪卡，方便后续复习。</p>
+            </div>
+            <div class="flashcards-header-actions">
+              <span id="flashcardCountBadge" class="badge">0 张卡片</span>
+              <button id="backHomeBtn" type="button" class="secondary-btn">返回查词</button>
+            </div>
+          </div>
+
+          <div class="flashcards-layout">
+            <div class="flashcard-stage">
+              <div id="flashcardEmptyState" class="flashcard-empty">
+                <div class="empty-illustration">☆</div>
+                <h3>还没有闪卡</h3>
+                <p>先去查几个词，系统会自动把结果收进闪卡资料库。</p>
+              </div>
+
+              <div id="flashcardCard" class="flashcard-card hidden" aria-live="polite">
+                <div class="flashcard-card-top">
+                  <span id="flashcardSourceBadge" class="badge">源语言</span>
+                  <span id="flashcardProgressText" class="muted">0 / 0</span>
+                </div>
+
+                <div class="flashcard-face">
+                  <p id="flashcardFaceLabel" class="section-label">正面</p>
+                  <div id="flashcardFrontText" class="flashcard-front-text"></div>
+                  <div id="flashcardBackText" class="flashcard-back-text hidden"></div>
+                </div>
+
+                <div class="flashcard-meta-grid">
+                  <div>
+                    <span>目标语言</span>
+                    <strong id="flashcardTranslationText">-</strong>
+                  </div>
+                  <div>
+                    <span>复习次数</span>
+                    <strong id="flashcardReviewCountText">0</strong>
+                  </div>
+                  <div>
+                    <span>最近查询</span>
+                    <strong id="flashcardUpdatedText">-</strong>
+                  </div>
+                </div>
+              </div>
+
+              <div class="action-row">
+                <button id="prevFlashcardBtn" type="button" class="secondary-btn">上一张</button>
+                <button id="flipFlashcardBtn" type="button" class="primary-btn">翻面查看</button>
+                <button id="nextFlashcardBtn" type="button" class="secondary-btn">下一张</button>
+              </div>
+            </div>
+
+            <aside class="flashcard-library">
+              <div class="panel-head">
+                <div>
+                  <p class="section-label">卡片库</p>
+                  <h3>最近收录</h3>
+                </div>
+              </div>
+              <div id="flashcardList" class="flashcard-list"></div>
+            </aside>
+          </div>
+        </section>
+      </section>
 
       <section id="settingsPanel" class="settings-panel hidden" aria-hidden="true">
         <div class="settings-card">

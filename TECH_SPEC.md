@@ -59,7 +59,7 @@
 
 ### 3.2 数据流
 
-用户按快捷键 -> Tauri 打开窗口 -> 前端自动聚焦输入框 -> 用户输入词语 -> 应用层选择 Provider -> 调用 AI -> 解析结果 -> 渲染到输出窗口；AI 配置通过设置页维护。用户不手动选择输出语言，系统根据输入内容自动做中英互翻。
+用户按快捷键 -> Tauri 打开窗口 -> 前端自动聚焦输入框 -> 用户输入词语 -> 应用层选择 Provider -> 调用 AI -> 解析结果 -> 渲染到输出窗口 -> 成功结果写入本地闪卡资料库；AI 配置通过设置页维护。用户不手动选择输出语言，系统根据输入内容自动做中英互翻。闪卡页面直接读取本地资料库，按最新查词记录排序。
 
 ## 4. 项目结构建议
 
@@ -223,6 +223,32 @@ const entry = demoEntries.find((item) =>
 - 移除简短说明 UI；词条的 `explanationZh` 不渲染
 - 不展示模型推理内容，连通性测试仅展示必要状态
 - 不展示当前来源、耗时、调试状态等非必要信息
+
+### 5.7 闪卡资料库
+
+闪卡不是独立知识库，而是从“日常查词内容”派生出来的本地数据层。
+
+建议数据结构：
+
+```ts
+type Flashcard = {
+  id: string;
+  query: string;
+  sourceLang: Language;
+  translation: string;
+  explanationZh: string;
+  reviewCount: number;
+  createdAt: string;
+  updatedAt: string;
+};
+```
+
+实现约定：
+
+- 每次查词成功后，按 `query + sourceLang` 去重写入
+- 再次查询同一词条时，更新 `translation`、`explanationZh` 和 `updatedAt`
+- 闪卡页面可基于 `updatedAt` 倒序展示最近记录
+- 所有闪卡内容仅保存在本地，不做云同步
 
 ## 6. AI 接口建议
 
