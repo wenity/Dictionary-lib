@@ -19,9 +19,9 @@
 - 后端：Rust
 - 状态管理：Zustand
 - 构建工具：Vite
-- 配置持久化：本地配置文件 + 系统安全存储
+- 配置持久化：桌面端使用本地 SQLite 数据库，浏览器预览保留 localStorage 兜底
 
-当前 demo 已按 **Vite + Tauri** 骨架整理，前端入口由 `src/main.js` 统一加载页面与样式，Rust 入口位于 `src-tauri/src/main.rs`。当前桌面端通过 `invoke("translate_text")` 调用 Rust 侧 AI 命令，再访问 OpenAI 兼容 HTTP 接口；浏览器预览保留离线示例兜底，设置页统一管理服务地址、模型名称与 API Key。模型名称由用户手动填写并读取已保存值，服务地址只需要填写基础地址，运行时会自动补全 `/v1`。
+当前 demo 已按 **Vite + Tauri** 骨架整理，前端入口由 `src/main.js` 统一加载页面与样式，Rust 入口位于 `src-tauri/src/main.rs`。当前桌面端通过 `invoke("translate_text")` 调用 Rust 侧 AI 命令，再访问 OpenAI 兼容 HTTP 接口；浏览器预览保留离线示例兜底。桌面端的设置与闪卡资料库统一落到本地 SQLite 数据库，浏览器预览继续用 localStorage 作为兜底。设置页统一管理服务地址、模型名称与 API Key。模型名称由用户手动填写并读取已保存值，服务地址只需要填写基础地址，运行时会自动补全 `/v1`。
 
 ### 2.2 选择理由
 
@@ -135,7 +135,7 @@ interface AiProvider {
 
 前端 `testConnection` 成功时保持 `translationText` 为“连接正常”，设置页辅助文案明确仅测试服务连通性、不验证模型生成能力；浏览器提示“离线预览无法测试真实 AI 服务”。这些是状态文案，不属于 AI 翻译响应。
 
-设置页通过 `modelName` 文本输入框手动填写模型名称；启动时从 localStorage 读取已保存的模型名，输入变更时保存。未保存有效值时沿用默认模型 `qwen2.5:7b-instruct`。不再提供模型列表获取命令、下拉框、刷新按钮或列表状态；启动、打开设置页、切换来源以及修改地址或 API Key 均不会触发模型列表请求。
+设置页通过 `modelName` 文本输入框手动填写模型名称；桌面端启动时从 SQLite 读取已保存的模型名，浏览器预览则从 localStorage 读取，输入变更时保存到对应存储。未保存有效值时沿用默认模型 `qwen2.5:7b-instruct`。不再提供模型列表获取命令、下拉框、刷新按钮或列表状态；启动、打开设置页、切换来源以及修改地址或 API Key 均不会触发模型列表请求。
 
 本地模型模式的 Rust HTTP 客户端使用 `no_proxy()`，避免启动环境的 HTTP/HTTPS 代理将内网请求转发至不可达的网关；第三方 API 模式保持 reqwest 默认代理策略。连接测试成功仅代表服务接口可达，模型名称须填写服务端实际存在且支持文本生成的模型。
 

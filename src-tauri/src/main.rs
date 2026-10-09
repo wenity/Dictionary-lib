@@ -3,7 +3,10 @@ use std::time::Duration;
 use reqwest::header::{AUTHORIZATION, CONTENT_TYPE, HeaderMap, HeaderValue};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use tauri::{GlobalShortcutManager, Manager, WindowEvent};
+use tauri::{GlobalShortcutManager, Manager, State, WindowEvent};
+
+mod db;
+use db::{DbState, FlashcardRecord, FlashcardWriteRequest, LegacyState, PersistenceSnapshot, PersistedSettings};
 
 const DEFAULT_MODEL_NAME: &str = "qwen2.5:7b-instruct";
 
@@ -72,6 +75,30 @@ fn build_models_url(endpoint: &str) -> String {
 
 fn build_chat_completions_url(endpoint: &str) -> String {
   format!("{}/chat/completions", normalize_base_endpoint(endpoint))
+}
+
+#[tauri::command]
+fn initialize_persistence(
+  state: State<DbState>,
+  legacy: Option<LegacyState>,
+) -> Result<PersistenceSnapshot, String> {
+  state.initialize(legacy)
+}
+
+#[tauri::command]
+fn save_settings(
+  state: State<DbState>,
+  settings: PersistedSettings,
+) -> Result<PersistedSettings, String> {
+  state.save_settings(settings)
+}
+
+#[tauri::command]
+fn upsert_flashcard(
+  state: State<DbState>,
+  card: FlashcardWriteRequest,
+) -> Result<FlashcardRecord, String> {
+  state.upsert_flashcard(card)
 }
 
 fn strip_code_fence(text: &str) -> Result<&str, String> {
@@ -559,7 +586,13 @@ mod tests {
 
 fn main() {
   tauri::Builder::default()
-    .invoke_handler(tauri::generate_handler![test_connection, translate_text])
+    .invoke_handler(tauri::generate_handler![
+      initialize_persistence,
+      save_settings,
+      upsert_flashcard,
+      test_connection,
+      translate_text
+    ])
     .on_window_event(|event| {
       if let WindowEvent::CloseRequested { api, .. } = event.event() {
         api.prevent_close();
@@ -568,6 +601,9 @@ fn main() {
     })
     .setup(|app| {
       let app_handle = app.handle();
+      let db = DbState::open(&app_handle)?;
+      app.manage(db);
+
       let mut shortcut_manager = app.global_shortcut_manager();
 
       shortcut_manager

@@ -120,7 +120,7 @@ const state = {
   },
 };
 
-function readSavedSettings() {
+function readBrowserSettings() {
   const stored = window.localStorage.getItem(SETTINGS_STORAGE_KEY);
 
   if (!stored) {
@@ -152,13 +152,13 @@ function readSavedSettings() {
   }
 }
 
-function writeSavedSettings() {
+function writeBrowserSettings(settings) {
   const payload = {
-    provider: state.provider,
-    serviceEndpoint: elements.serviceEndpoint.value.trim(),
-    localEndpoint: elements.serviceEndpoint.value.trim(),
-    modelName: elements.modelName.value.trim(),
-    apiKey: elements.apiKey.value.trim(),
+    provider: settings.provider,
+    serviceEndpoint: settings.serviceEndpoint.trim(),
+    localEndpoint: settings.localEndpoint?.trim() || settings.serviceEndpoint.trim(),
+    modelName: settings.modelName.trim(),
+    apiKey: settings.apiKey.trim(),
   };
 
   window.localStorage.setItem(SETTINGS_STORAGE_KEY, JSON.stringify(payload));
@@ -175,7 +175,7 @@ function updateRuntimeBadge() {
     : "rgba(148, 163, 184, 0.18)";
 }
 
-function readSavedFlashcards() {
+function readBrowserFlashcards() {
   const stored = window.localStorage.getItem(FLASHCARDS_STORAGE_KEY);
 
   if (!stored) {
@@ -207,8 +207,66 @@ function readSavedFlashcards() {
   }
 }
 
-function writeSavedFlashcards(cards) {
+function writeBrowserFlashcards(cards) {
   window.localStorage.setItem(FLASHCARDS_STORAGE_KEY, JSON.stringify(cards));
+}
+
+async function loadPersistedState() {
+  if (!state.runtime.isTauri) {
+    return {
+      settings: readBrowserSettings(),
+      flashcards: readBrowserFlashcards(),
+    };
+  }
+
+  return invoke("initialize_persistence", {
+    legacy: {
+      settings: readBrowserSettings(),
+      flashcards: readBrowserFlashcards(),
+    },
+  });
+}
+
+async function persistSettings(settings) {
+  if (!state.runtime.isTauri) {
+    writeBrowserSettings(settings);
+    return settings;
+  }
+
+  return invoke("save_settings", { settings });
+}
+
+async function persistFlashcard(card) {
+  if (!state.runtime.isTauri) {
+    const nextCards = getFlashcardsStateCards();
+    const existingIndex = nextCards.findIndex((item) => item.id === card.id);
+
+    if (existingIndex >= 0) {
+      nextCards[existingIndex] = card;
+    } else {
+      nextCards.unshift(card);
+    }
+
+    state.flashcards.cards = nextCards;
+    writeBrowserFlashcards(nextCards);
+    return card;
+  }
+
+  return invoke("upsert_flashcard", { card });
+}
+
+function mergeFlashcardRecord(card) {
+  const cards = getFlashcardsStateCards();
+  const existingIndex = cards.findIndex((item) => item.id === card.id);
+
+  if (existingIndex >= 0) {
+    cards[existingIndex] = card;
+  } else {
+    cards.unshift(card);
+  }
+
+  state.flashcards.cards = cards;
+  renderFlashcardsButtonLabel();
 }
 
 function normalizeCardKey(query, sourceLang) {
@@ -269,7 +327,7 @@ function getCurrentFlashcard(cards = getFlashcardsStateCards()) {
 
 function persistFlashcards(cards) {
   state.flashcards.cards = cards;
-  writeSavedFlashcards(cards);
+  writeBrowserFlashcards(cards);
 }
 
 function selectFlashcardByIndex(index) {
@@ -288,28 +346,43 @@ function selectFlashcardByIndex(index) {
   renderFlashcardsPage();
 }
 
-function rememberFlashcard({ query, sourceLang, translation, explanationZh }) {
-  const cards = getFlashcardsStateCards();
-  const key = normalizeCardKey(query, sourceLang);
+async function rememberFlashcard({ query, sourceLang, translation, explanationZh }) {
+  const existingCards = getFlashcardsStateCards();
   const now = new Date().toISOString();
-  const existingIndex = cards.findIndex((card) => normalizeCardKey(card.query, card.sourceLang) === key);
+  const normalizedSourceLang = sourceLang === "zh" ? "zh" : "en";
+  const existingIndex = existingCards.findIndex(
+    (card) => normalizeCardKey(card.query, card.sourceLang) === normalizeCardKey(query, normalizedSourceLang),
+  );
   const nextCard = {
-    id: existingIndex >= 0 ? cards[existingIndex].id : crypto.randomUUID(),
+    id: existingIndex >= 0 ? existingCards[existingIndex].id : `${normalizedSourceLang}:${normalize(query)}`,
     query,
-    sourceLang,
+    sourceLang: normalizedSourceLang,
     translation,
     explanationZh: explanationZh ?? "",
-    reviewCount: existingIndex >= 0 ? cards[existingIndex].reviewCount + 1 : 1,
-    createdAt: existingIndex >= 0 ? cards[existingIndex].createdAt : now,
+    reviewCount: existingIndex >= 0 ? existingCards[existingIndex].reviewCount + 1 : 1,
+    createdAt: existingIndex >= 0 ? existingCards[existingIndex].createdAt : now,
     updatedAt: now,
   };
 
-  const nextCards = existingIndex >= 0
-    ? cards.map((card, index) => (index === existingIndex ? nextCard : card))
-    : [nextCard, ...cards];
+  if (state.runtime.isTauri) {
+    const savedCard = await persistFlashcard({
+      query,
+      sourceLang: normalizedSourceLang,
+      translation,
+      explanationZh: explanationZh ?? "",
+    });
+    mergeFlashcardRecord(savedCard);
+    state.flashcards.currentCardId = savedCard.id;
+  } else {
+    const nextCards = existingIndex >= 0
+      ? existingCards.map((card, index) => (index === existingIndex ? nextCard : card))
+      : [nextCard, ...existingCards];
 
-  persistFlashcards(nextCards);
-  state.flashcards.currentCardId = nextCard.id;
+    state.flashcards.cards = nextCards;
+    writeBrowserFlashcards(nextCards);
+    state.flashcards.currentCardId = nextCard.id;
+  }
+
   state.flashcards.isFlipped = false;
   renderFlashcardsPage();
 }
@@ -536,17 +609,26 @@ async function requestDesktopTranslation(query) {
   });
 }
 
-function applySavedSettings() {
-  const settings = readSavedSettings();
+function applyPersistedState(snapshot) {
+  const settings = snapshot.settings ?? readBrowserSettings();
 
-  elements.serviceEndpoint.value = settings.serviceEndpoint;
-  elements.modelName.value = settings.modelName;
-  elements.apiKey.value = settings.apiKey;
-  setProvider(settings.provider, { persist: false });
+  elements.serviceEndpoint.value = settings.serviceEndpoint?.trim() || DEFAULT_SERVICE_ENDPOINT;
+  elements.modelName.value = settings.modelName?.trim() || DEFAULT_MODEL_NAME;
+  elements.apiKey.value = settings.apiKey?.trim() || "";
+  setProvider(settings.provider ?? "local", { persist: false });
+  state.flashcards.cards = snapshot.flashcards ?? [];
+  renderFlashcardsButtonLabel();
+  renderFlashcardsPage();
 }
 
-function syncSavedSettings() {
-  writeSavedSettings();
+async function syncSavedSettings() {
+  return persistSettings({
+    provider: state.provider,
+    serviceEndpoint: elements.serviceEndpoint.value.trim(),
+    localEndpoint: elements.serviceEndpoint.value.trim(),
+    modelName: elements.modelName.value.trim(),
+    apiKey: elements.apiKey.value.trim(),
+  });
 }
 
 function showError(title, message) {
@@ -571,7 +653,9 @@ function setProvider(provider, { persist = true } = {}) {
   updateSettingsHelperText();
 
   if (persist) {
-    syncSavedSettings();
+    void syncSavedSettings().catch((error) => {
+      console.error("保存设置失败：", error);
+    });
   }
 }
 
@@ -601,7 +685,7 @@ async function runSearch(rawQuery) {
       : buildOfflineResult(query);
 
     elements.translationText.textContent = result.translation;
-    rememberFlashcard({
+    await rememberFlashcard({
       query,
       sourceLang: result.sourceLang ?? detectLanguage(query),
       translation: result.translation,
@@ -724,7 +808,11 @@ elements.input.addEventListener("keydown", (event) => {
 });
 
 [elements.serviceEndpoint, elements.modelName, elements.apiKey].forEach((field) => {
-  field.addEventListener("input", syncSavedSettings);
+  field.addEventListener("input", () => {
+    void syncSavedSettings().catch((error) => {
+      console.error("保存设置失败：", error);
+    });
+  });
 });
 
 document.addEventListener("keydown", (event) => {
@@ -768,22 +856,20 @@ document.addEventListener("keydown", (event) => {
   }
 });
 
-async function setupDesktopRuntime() {
+function setupDesktopRuntime() {
   state.runtime.isTauri = Boolean(window.__TAURI__);
   updateRuntimeBadge();
 }
 
 async function bootstrap() {
-  applySavedSettings();
-  state.flashcards.cards = readSavedFlashcards();
+  setupDesktopRuntime();
+  const snapshot = await loadPersistedState();
+  applyPersistedState(snapshot);
   setVisible("empty");
   updateSettingsPanel(false);
-  updateRuntimeBadge();
   updateSettingsHelperText();
   renderFlashcardsButtonLabel();
-  renderFlashcardsPage();
   setView("home");
-  await setupDesktopRuntime();
 
   window.setTimeout(() => {
     elements.input.focus();
