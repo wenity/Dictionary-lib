@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>轻量化中英互查 Demo</title>
+    <title>轻量化中英互查工具</title>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
@@ -66,7 +66,7 @@
           <div id="resultState" class="result-state empty">
             <div class="empty-illustration">Aa</div>
             <h3>输入内容后按回车查询</h3>
-            <p>结果会以“主翻译 + 简短解释”的形式展示，符合 MVP 的快速查词场景。</p>
+            <p>结果会直接调用已配置的 AI 来源，以“主翻译 + 简短解释”的形式展示。</p>
           </div>
 
           <div id="resultView" class="result-view hidden">
@@ -83,8 +83,8 @@
 
           <div id="loadingState" class="result-state loading hidden">
             <div class="spinner"></div>
-            <h3>正在生成结果</h3>
-            <p>模拟 AI 处理过程，展示加载态。</p>
+            <h3>正在调用 AI</h3>
+            <p>正在调用 AI 服务并解析返回内容，请稍候。</p>
           </div>
 
           <div id="errorState" class="result-state error hidden">
@@ -112,8 +112,8 @@
 
           <div class="settings-grid">
             <label>
-              <span>本地服务地址</span>
-              <input id="localEndpoint" type="text" value="http://localhost:11434/v1" />
+              <span>模型服务地址</span>
+              <input id="serviceEndpoint" type="text" value="http://localhost:11434/v1" />
             </label>
             <label>
               <span>模型名称</span>
@@ -129,7 +129,7 @@
             <button type="button" id="testBtn" class="primary-btn">测试连通性</button>
           </div>
 
-          <p class="helper-text">AI 配置只放在这里，主页始终保持输入和输出两个窗口。快捷键为 Ctrl / ⌘ + K。</p>
+          <p id="settingsHelperText" class="helper-text">当前模式会调用 OpenAI 兼容接口。快捷键为 Ctrl / ⌘ + K。</p>
         </div>
       </section>
     </div>

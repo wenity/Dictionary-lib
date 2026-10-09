@@ -1,3 +1,8 @@
+import { invoke } from "@tauri-apps/api/tauri";
+
+const DEFAULT_SERVICE_ENDPOINT = "http://localhost:11434/v1";
+const DEFAULT_MODEL_NAME = "qwen2.5:7b-instruct";
+
 const demoEntries = [
   {
     sourceLang: "en",
@@ -25,7 +30,7 @@ const demoEntries = [
   },
   {
     sourceLang: "en",
-    aliases: ["trade-off"],
+    aliases: ["trade-off", "tradeoff"],
     translation: "权衡；取舍",
     explanationZh: "通常用于表达为了得到某项收益而必须接受另一项代价。",
   },
@@ -64,26 +69,26 @@ const elements = {
   settingsBtn: document.getElementById("settingsBtn"),
   settingsPanel: document.getElementById("settingsPanel"),
   closeSettingsBtn: document.getElementById("closeSettingsBtn"),
-  localEndpoint: document.getElementById("localEndpoint"),
+  serviceEndpoint:
+    document.getElementById("serviceEndpoint") ?? document.getElementById("localEndpoint"),
   modelName: document.getElementById("modelName"),
   apiKey: document.getElementById("apiKey"),
   modeBadge: document.getElementById("modeBadge"),
   providerText: document.getElementById("providerText"),
+  settingsHelperText: document.getElementById("settingsHelperText"),
   providerTabs: [...document.querySelectorAll(".tab")],
 };
 
 const SETTINGS_STORAGE_KEY = "dictionary-lib.settings";
 const defaultSettings = {
   provider: "local",
-  localEndpoint: "http://localhost:11434/v1",
-  modelName: "qwen2.5:7b-instruct",
+  serviceEndpoint: DEFAULT_SERVICE_ENDPOINT,
+  modelName: DEFAULT_MODEL_NAME,
   apiKey: "",
 };
 
 const state = {
   provider: defaultSettings.provider,
-  loadingTimer: null,
-  lastQuery: "",
   runtime: {
     isTauri: false,
   },
@@ -99,12 +104,16 @@ function readSavedSettings() {
   try {
     const parsed = JSON.parse(stored);
 
+    const serviceEndpoint =
+      typeof parsed.serviceEndpoint === "string" && parsed.serviceEndpoint.trim()
+        ? parsed.serviceEndpoint.trim()
+        : typeof parsed.localEndpoint === "string" && parsed.localEndpoint.trim()
+          ? parsed.localEndpoint.trim()
+          : defaultSettings.serviceEndpoint;
+
     return {
       provider: parsed.provider === "api" ? "api" : "local",
-      localEndpoint:
-        typeof parsed.localEndpoint === "string" && parsed.localEndpoint.trim()
-          ? parsed.localEndpoint.trim()
-          : defaultSettings.localEndpoint,
+      serviceEndpoint,
       modelName:
         typeof parsed.modelName === "string" && parsed.modelName.trim()
           ? parsed.modelName.trim()
@@ -120,7 +129,8 @@ function readSavedSettings() {
 function writeSavedSettings() {
   const payload = {
     provider: state.provider,
-    localEndpoint: elements.localEndpoint.value.trim(),
+    serviceEndpoint: elements.serviceEndpoint.value.trim(),
+    localEndpoint: elements.serviceEndpoint.value.trim(),
     modelName: elements.modelName.value.trim(),
     apiKey: elements.apiKey.value.trim(),
   };
@@ -140,15 +150,26 @@ function updateRuntimeBadge() {
 }
 
 function detectLanguage(text) {
-  return /[\u4e00-\u9fff]/.test(text) ? "zh" : "en";
+  const chineseCount = text.match(/[\u4e00-\u9fff]/g)?.length ?? 0;
+  const latinCount = text.match(/[A-Za-z]/g)?.length ?? 0;
+
+  if (chineseCount === 0 && latinCount === 0) {
+    return "en";
+  }
+
+  return chineseCount >= latinCount ? "zh" : "en";
 }
 
 function normalize(text) {
-  return text.trim().toLowerCase();
+  return text
+    .trim()
+    .toLowerCase()
+    .replace(/[\s·,.;:'"“”"()（）【】\[\]{}!?！？/\\-]/g, "");
 }
 
 function findDemoEntry(query, sourceLang) {
   const normalized = normalize(query);
+
   return demoEntries.find(
     (entry) =>
       entry.sourceLang === sourceLang &&
@@ -189,61 +210,93 @@ function renderProviderLabel() {
   }
 }
 
+function updateSettingsHelperText() {
+  if (!elements.settingsHelperText) {
+    return;
+  }
+
+  elements.settingsHelperText.textContent =
+    state.provider === "local"
+      ? "本地模式会调用你填写的 OpenAI 兼容服务地址，常见于 Ollama / LM Studio。快捷键为 Ctrl / ⌘ + K。"
+      : "API Key 模式会把同一服务地址作为云端模型入口，并附带授权信息。快捷键为 Ctrl / ⌘ + K。";
+}
+
 function updateSettingsPanel(open) {
   elements.settingsPanel.classList.toggle("hidden", !open);
   elements.settingsPanel.setAttribute("aria-hidden", String(!open));
 }
 
 function getModeConfig() {
-  return state.provider === "local"
-    ? {
-        label: "本地大模型",
-        required: elements.localEndpoint.value.trim(),
-        detail: elements.modelName.value.trim(),
-        missingMessage: "请先补全本地服务地址，才能模拟本地模型查询。",
-      }
-    : {
-        label: "第三方 API Key",
-        required: elements.apiKey.value.trim(),
-        detail: "已启用外部服务商模式",
-        missingMessage: "请先填写 API Key，才能模拟云端模型查询。",
-      };
+  const serviceEndpoint = elements.serviceEndpoint.value.trim();
+  const modelName = elements.modelName.value.trim() || DEFAULT_MODEL_NAME;
+  const apiKey = elements.apiKey.value.trim();
+  const missing = [];
+
+  if (!serviceEndpoint) {
+    missing.push("模型服务地址");
+  }
+
+  if (state.provider === "api" && !apiKey) {
+    missing.push("API Key");
+  }
+
+  return {
+    provider: state.provider,
+    serviceEndpoint,
+    modelName,
+    apiKey,
+    missing,
+  };
 }
 
-function buildMockResult(query) {
+function buildOfflineResult(query) {
   const language = detectLanguage(query);
   const entry = findDemoEntry(query, language);
 
   if (entry) {
     return {
-      language,
       translation: entry.translation,
-      explanation: entry.explanationZh,
-      quality: "已命中示例词条",
+      explanationZh: entry.explanationZh,
+      badge: "命中示例词条",
+      tone: "success",
     };
   }
 
   if (language === "en") {
     return {
-      language,
       translation: `${query}（中文释义）`,
-      explanation: "简短说明：英文输入将自动输出中文释义，便于快速查词。",
-      quality: "AI 模拟生成",
+      explanationZh: "离线演示模式下，英文输入会优先给出中文释义，便于快速查词。",
+      badge: "离线演示",
+      tone: "",
     };
   }
 
   return {
-    language,
     translation: `${query} (English)`,
-    explanation: "简短说明：中文输入将自动输出英文释义，便于快速查词。",
-    quality: "AI 模拟生成",
+    explanationZh: "离线演示模式下，中文输入会优先给出英文释义，便于快速查词。",
+    badge: "离线演示",
+    tone: "",
   };
+}
+
+async function requestDesktopTranslation(query) {
+  const config = getModeConfig();
+
+  return invoke("translate_text", {
+    request: {
+      query,
+      provider: config.provider,
+      serviceEndpoint: config.serviceEndpoint,
+      modelName: config.modelName,
+      apiKey: config.apiKey,
+    },
+  });
 }
 
 function applySavedSettings() {
   const settings = readSavedSettings();
 
-  elements.localEndpoint.value = settings.localEndpoint;
+  elements.serviceEndpoint.value = settings.serviceEndpoint;
   elements.modelName.value = settings.modelName;
   elements.apiKey.value = settings.apiKey;
   setProvider(settings.provider, { persist: false });
@@ -260,79 +313,89 @@ function showError(title, message) {
   renderBadge("配置不足", "error");
 }
 
-function runSearch(rawQuery) {
-  const query = rawQuery.trim();
-
-  if (state.loadingTimer) {
-    clearTimeout(state.loadingTimer);
-    state.loadingTimer = null;
-  }
-
-  if (!query) {
-    setVisible("empty");
-    elements.input.focus();
-    return;
-  }
-
-  const config = getModeConfig();
-
-  if (!config.required) {
-    showError("配置需要补全", config.missingMessage);
-    return;
-  }
-
-  state.lastQuery = query;
-  setVisible("loading");
-
-  state.loadingTimer = window.setTimeout(() => {
-    const result = buildMockResult(query);
-
-    elements.translationText.textContent = result.translation;
-    elements.explanationText.textContent = result.explanation;
-
-    setVisible("success");
-    state.loadingTimer = null;
-  }, 760);
-}
-
 function setProvider(provider, { persist = true } = {}) {
   state.provider = provider;
+
   elements.providerTabs.forEach((tab) => {
     tab.classList.toggle("active", tab.dataset.provider === provider);
   });
 
-  if (provider === "local") {
-    elements.apiKey.closest("label").style.opacity = "0.55";
-    elements.localEndpoint.closest("label").style.opacity = "1";
-  } else {
-    elements.apiKey.closest("label").style.opacity = "1";
-    elements.localEndpoint.closest("label").style.opacity = "0.55";
+  if (elements.apiKey) {
+    elements.apiKey.closest("label").style.opacity = provider === "local" ? "0.55" : "1";
   }
+
   renderProviderLabel();
+  updateSettingsHelperText();
 
   if (persist) {
     syncSavedSettings();
   }
 }
 
-function testConnection() {
+async function runSearch(rawQuery) {
+  const query = rawQuery.trim();
+
+  if (!query) {
+    setVisible("empty");
+    renderBadge(state.runtime.isTauri ? "Tauri 桌面模式" : "浏览器预览");
+    elements.input.focus();
+    return;
+  }
+
   const config = getModeConfig();
 
-  if (!config.required) {
-    showError("连通性测试失败", config.missingMessage);
+  if (config.missing.length > 0) {
+    showError("配置需要补全", `请先补全：${config.missing.join("、")}。`);
     return;
   }
 
   setVisible("loading");
+  renderBadge(state.runtime.isTauri ? "AI 处理中" : "离线演示");
 
-  window.setTimeout(() => {
-    elements.translationText.textContent = "连接正常";
-    elements.explanationText.textContent = state.provider === "local"
-      ? `已连接 ${elements.localEndpoint.value.trim()}，当前模型：${elements.modelName.value.trim()}。`
-      : "API Key 已通过前端校验，后续可接入真实服务。";
+  try {
+    const result = state.runtime.isTauri
+      ? await requestDesktopTranslation(query)
+      : buildOfflineResult(query);
+
+    elements.translationText.textContent = result.translation;
+    elements.explanationText.textContent = result.explanationZh ?? "";
 
     setVisible("success");
-  }, 620);
+    renderBadge(result.badge ?? "AI 已返回", result.tone ?? "success");
+  } catch (error) {
+    showError("查询失败", error instanceof Error ? error.message : String(error));
+  }
+}
+
+async function testConnection() {
+  const config = getModeConfig();
+
+  if (config.missing.length > 0) {
+    showError("连通性测试失败", `请先补全：${config.missing.join("、")}。`);
+    return;
+  }
+
+  if (!state.runtime.isTauri) {
+    setVisible("success");
+    elements.translationText.textContent = "浏览器预览模式";
+    elements.explanationText.textContent = "当前仅启用离线演示结果；切换到 Tauri 桌面模式后即可测试真实 AI 服务。";
+    renderBadge("浏览器预览", "");
+    return;
+  }
+
+  setVisible("loading");
+  renderBadge("测试连接");
+
+  try {
+    await requestDesktopTranslation("connection test");
+    setVisible("success");
+    elements.translationText.textContent = "连接正常";
+    elements.explanationText.textContent =
+      `已连通 ${config.serviceEndpoint}，当前模型：${config.modelName}。`;
+    renderBadge("AI 已连接", "success");
+  } catch (error) {
+    showError("连通性测试失败", error instanceof Error ? error.message : String(error));
+  }
 }
 
 elements.form.addEventListener("submit", (event) => {
@@ -361,7 +424,7 @@ elements.input.addEventListener("keydown", (event) => {
   }
 });
 
-[elements.localEndpoint, elements.modelName, elements.apiKey].forEach((field) => {
+[elements.serviceEndpoint, elements.modelName, elements.apiKey].forEach((field) => {
   field.addEventListener("input", syncSavedSettings);
 });
 
@@ -378,14 +441,7 @@ document.addEventListener("keydown", (event) => {
 });
 
 async function setupDesktopRuntime() {
-  if (!window.__TAURI__) {
-    state.runtime.isTauri = false;
-    updateRuntimeBadge();
-    return;
-  }
-
-  state.runtime.isTauri = true;
-
+  state.runtime.isTauri = Boolean(window.__TAURI__);
   updateRuntimeBadge();
 }
 
@@ -394,6 +450,7 @@ async function bootstrap() {
   setVisible("empty");
   updateSettingsPanel(false);
   updateRuntimeBadge();
+  updateSettingsHelperText();
   await setupDesktopRuntime();
 
   window.setTimeout(() => {
