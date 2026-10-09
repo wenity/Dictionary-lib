@@ -115,9 +115,15 @@
               <span>模型服务地址（可省略 /v1）</span>
               <input id="serviceEndpoint" type="text" value="http://localhost:11434/v1" />
             </label>
-            <label>
-              <span>模型名称</span>
-              <input id="modelName" type="text" value="qwen2.5:7b-instruct" />
+            <label class="full">
+              <div class="field-row">
+                <span>模型名称</span>
+                <button id="refreshModelsBtn" type="button" class="secondary-btn compact-btn">刷新列表</button>
+              </div>
+              <select id="modelNameSelect" class="settings-select">
+                <option value="qwen2.5:7b-instruct">qwen2.5:7b-instruct</option>
+              </select>
+              <p id="modelStatusText" class="field-note">打开设置后会自动拉取真实可用模型。</p>
             </label>
             <label class="full">
               <span>API Key</span>

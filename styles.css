@@ -147,7 +147,8 @@ h1 {
   font-size: 13px;
 }
 
-input {
+input,
+select {
   width: 100%;
   border: 0;
   outline: 0;
@@ -155,6 +156,12 @@ input {
   background: transparent;
   padding: 0 16px 14px;
   font-size: 16px;
+}
+
+select {
+  appearance: none;
+  -webkit-appearance: none;
+  -moz-appearance: none;
 }
 
 input::placeholder {
@@ -192,6 +199,11 @@ button {
   background: rgba(15, 23, 42, 0.9);
   color: var(--text);
   border: 1px solid var(--line);
+}
+
+.compact-btn {
+  padding: 8px 12px;
+  font-size: 12px;
 }
 
 .primary-btn:hover,
@@ -232,6 +244,40 @@ button {
 .settings-grid span {
   color: var(--muted);
   font-size: 13px;
+}
+
+.field-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.settings-select {
+  padding-top: 12px;
+  padding-bottom: 12px;
+  border-radius: 14px;
+  border: 1px solid var(--line);
+  background: rgba(15, 23, 42, 0.78);
+}
+
+.field-note {
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.field-note[data-tone="success"] {
+  color: var(--success);
+}
+
+.field-note[data-tone="warning"] {
+  color: #fbbf24;
+}
+
+.field-note[data-tone="error"] {
+  color: var(--danger);
 }
 
 .helper-text {

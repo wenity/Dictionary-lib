@@ -258,6 +258,52 @@ async fn send_get_request(endpoint: &str, provider: &str, api_key: &str) -> Resu
   Ok(body_text)
 }
 
+fn extract_model_ids(body: &Value) -> Vec<String> {
+  let mut models = Vec::new();
+
+  let push_model = |value: Option<&str>, models: &mut Vec<String>| {
+    if let Some(id) = value {
+      let trimmed = id.trim();
+      if !trimmed.is_empty() && !models.iter().any(|existing| existing == trimmed) {
+        models.push(trimmed.to_string());
+      }
+    }
+  };
+
+  let arrays: [&[Value]; 2] = [
+    body
+      .get("data")
+      .and_then(Value::as_array)
+      .map(Vec::as_slice)
+      .unwrap_or(&[]),
+    body
+      .get("models")
+      .and_then(Value::as_array)
+      .map(Vec::as_slice)
+      .unwrap_or(&[]),
+  ];
+
+  for array in arrays {
+    for item in array {
+      push_model(
+        item.get("id")
+          .or_else(|| item.get("name"))
+          .or_else(|| item.get("model"))
+          .and_then(Value::as_str),
+        &mut models,
+      );
+    }
+  }
+
+  if models.is_empty() {
+    push_model(body.get("id").and_then(Value::as_str), &mut models);
+    push_model(body.get("name").and_then(Value::as_str), &mut models);
+    push_model(body.get("model").and_then(Value::as_str), &mut models);
+  }
+
+  models
+}
+
 #[tauri::command]
 async fn test_connection(request: TranslateRequest) -> Result<String, String> {
   let service_endpoint = request.service_endpoint.trim();
@@ -276,6 +322,34 @@ async fn test_connection(request: TranslateRequest) -> Result<String, String> {
 
   let _ = send_get_request(service_endpoint, &request.provider, api_key).await?;
   Ok("连接正常".to_string())
+}
+
+#[tauri::command]
+async fn list_models(request: TranslateRequest) -> Result<Vec<String>, String> {
+  let service_endpoint = request.service_endpoint.trim();
+  if service_endpoint.is_empty() {
+    return Err("请先补全模型服务地址。".to_string());
+  }
+
+  let api_key = request.api_key.trim();
+  if request.provider == "api" && api_key.is_empty() {
+    return Err("请先填写 API Key。".to_string());
+  }
+
+  if request.provider != "local" && request.provider != "api" {
+    return Err("不支持的 AI 来源配置。".to_string());
+  }
+
+  let body_text = send_get_request(service_endpoint, &request.provider, api_key).await?;
+  let body: Value =
+    serde_json::from_str(&body_text).map_err(|error| format!("模型列表不是有效 JSON：{error}"))?;
+  let models = extract_model_ids(&body);
+
+  if models.is_empty() {
+    return Err("未从服务端获取到可用模型列表。".to_string());
+  }
+
+  Ok(models)
 }
 
 #[tauri::command]
@@ -352,7 +426,7 @@ async fn translate_text(request: TranslateRequest) -> Result<TranslateResponse, 
 
 fn main() {
   tauri::Builder::default()
-    .invoke_handler(tauri::generate_handler![test_connection, translate_text])
+    .invoke_handler(tauri::generate_handler![list_models, test_connection, translate_text])
     .on_window_event(|event| {
       if let WindowEvent::CloseRequested { api, .. } = event.event() {
         api.prevent_close();
