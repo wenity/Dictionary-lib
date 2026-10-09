@@ -21,7 +21,7 @@
 - 构建工具：Vite
 - 配置持久化：本地配置文件 + 系统安全存储
 
-当前 demo 已按 **Vite + Tauri** 骨架整理，前端入口由 `src/main.js` 统一加载页面与样式，Rust 入口位于 `src-tauri/src/main.rs`。当前前端已通过 OpenAI 兼容 HTTP 接口完成真实 AI 查询，设置页统一管理服务地址、模型名称与 API Key。
+当前 demo 已按 **Vite + Tauri** 骨架整理，前端入口由 `src/main.js` 统一加载页面与样式，Rust 入口位于 `src-tauri/src/main.rs`。当前桌面端通过 `invoke("translate_text")` 调用 Rust 侧 AI 命令，再访问 OpenAI 兼容 HTTP 接口；浏览器预览保留离线示例兜底，设置页统一管理服务地址、模型名称与 API Key。
 
 ### 2.2 选择理由
 
@@ -130,7 +130,7 @@ interface AiProvider {
 - `LocalModelProvider`
 - `ApiKeyProvider`
 
-当前实现可直接复用同一套 OpenAI 兼容 `chat/completions` 请求，只在服务地址和鉴权头上区分本地与云端配置。
+当前实现可直接复用同一套 OpenAI 兼容 `chat/completions` 请求，只在 Rust 侧的服务地址和鉴权头上区分本地与云端配置。
 
 ### 5.4 稳定数据结构规范
 
