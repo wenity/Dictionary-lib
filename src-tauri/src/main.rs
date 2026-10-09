@@ -209,9 +209,16 @@ fn summarize_error_body(body: &str) -> String {
   format!("{}...", &trimmed[..180])
 }
 
-fn build_client() -> Result<reqwest::Client, String> {
-  reqwest::Client::builder()
-    .timeout(Duration::from_secs(30))
+fn build_client(provider: &str) -> Result<reqwest::Client, String> {
+  let builder = reqwest::Client::builder().timeout(Duration::from_secs(30));
+  // Local model services use the direct intranet route, not inherited HTTP proxies.
+  let builder = if provider == "local" {
+    builder.no_proxy()
+  } else {
+    builder
+  };
+
+  builder
     .build()
     .map_err(|error| format!("初始化 AI 请求失败：{error}"))
 }
@@ -232,7 +239,7 @@ fn build_headers(provider: &str, api_key: &str) -> Result<HeaderMap, String> {
 }
 
 async fn send_get_request(endpoint: &str, provider: &str, api_key: &str) -> Result<String, String> {
-  let client = build_client()?;
+  let client = build_client(provider)?;
   let headers = build_headers(provider, api_key)?;
   let response = client
     .get(build_models_url(endpoint))
@@ -302,7 +309,7 @@ async fn translate_text(request: TranslateRequest) -> Result<TranslateResponse, 
 
   let source_lang = detect_language(&request.query);
   let prompt = build_prompt(&request.query, source_lang);
-  let client = build_client()?;
+  let client = build_client(&request.provider)?;
   let headers = build_headers(&request.provider, api_key)?;
   let payload = serde_json::json!({
     "model": model_name,
@@ -348,6 +355,46 @@ async fn translate_text(request: TranslateRequest) -> Result<TranslateResponse, 
   let content = extract_assistant_text(&body).ok_or_else(|| "AI 返回内容为空。".to_string())?;
 
   parse_translation_response(&content)
+}
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+
+  #[test]
+  fn local_client_reaches_models_endpoint() {
+    use std::io::{Read, Write};
+    use std::net::TcpListener;
+
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let endpoint = format!("http://{}", listener.local_addr().unwrap());
+    let server = std::thread::spawn(move || {
+      let (mut stream, _) = listener.accept().unwrap();
+      stream.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+      let mut request = [0; 4096];
+      let count = stream.read(&mut request).unwrap();
+      assert!(String::from_utf8_lossy(&request[..count]).starts_with("GET /v1/models "));
+      let body = r#"{"data":[{"id":"test-model"}]}"#;
+      write!(stream, "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}", body.len(), body).unwrap();
+    });
+    let body = tauri::async_runtime::block_on(send_get_request(&endpoint, "local", "")).unwrap();
+    assert_eq!(serde_json::from_str::<Value>(&body).unwrap()["data"][0]["id"], "test-model");
+    server.join().unwrap();
+  }
+
+  #[test]
+  #[ignore = "Requires DICTIONARY_TEST_ENDPOINT pointing to an accessible model service"]
+  fn configured_local_service_connection() {
+    let endpoint = std::env::var("DICTIONARY_TEST_ENDPOINT").unwrap();
+    let result = tauri::async_runtime::block_on(test_connection(TranslateRequest {
+      query: String::new(),
+      provider: "local".to_string(),
+      service_endpoint: endpoint,
+      model_name: String::new(),
+      api_key: String::new(),
+    }));
+    assert_eq!(result.unwrap(), "连接正常");
+  }
 }
 
 fn main() {
