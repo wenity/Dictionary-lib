@@ -1,0 +1,38 @@
+{
+  "$schema": "https://schema.tauri.app/config/1",
+  "build": {
+    "beforeDevCommand": "npm run dev",
+    "beforeBuildCommand": "npm run build",
+    "devPath": "http://localhost:5173",
+    "distDir": "../dist"
+  },
+  "package": {
+    "productName": "Dictionary_lib",
+    "version": "0.1.0"
+  },
+  "tauri": {
+    "allowlist": {
+      "all": false,
+      "globalShortcut": {
+        "all": true
+      },
+      "window": {
+        "all": true
+      }
+    },
+    "bundle": {
+      "active": true,
+      "identifier": "com.dictionary.lib",
+      "icon": [],
+      "resources": []
+    },
+    "windows": [
+      {
+        "title": "轻量化中英互查工具",
+        "width": 1280,
+        "height": 860,
+        "resizable": true
+      }
+    ]
+  }
+}

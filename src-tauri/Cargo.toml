@@ -1,0 +1,16 @@
+[package]
+name = "dictionary_lib"
+version = "0.1.0"
+description = "轻量化中英互查工具"
+authors = ["Copilot"]
+edition = "2021"
+
+[build-dependencies]
+tauri-build = { version = "1", features = [] }
+
+[dependencies]
+tauri = { version = "1", features = ["global-shortcut-all", "window-all"] }
+
+[features]
+default = []
+custom-protocol = ["tauri/custom-protocol"]
