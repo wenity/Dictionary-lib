@@ -62,7 +62,6 @@ const elements = {
   loadingState: document.getElementById("loadingState"),
   errorState: document.getElementById("errorState"),
   translationText: document.getElementById("translationText"),
-  explanationText: document.getElementById("explanationText"),
   errorTitle: document.getElementById("errorTitle"),
   errorMessage: document.getElementById("errorMessage"),
   testBtn: document.getElementById("testBtn"),
@@ -256,7 +255,6 @@ function buildOfflineResult(query) {
   if (entry) {
     return {
       translation: entry.translation,
-      explanationZh: entry.explanationZh,
       badge: "命中示例词条",
       tone: "success",
     };
@@ -265,7 +263,6 @@ function buildOfflineResult(query) {
   if (language === "en") {
     return {
       translation: `${query}（中文释义）`,
-      explanationZh: "离线演示模式下，英文输入会优先给出中文释义，便于快速查词。",
       badge: "离线演示",
       tone: "",
     };
@@ -273,7 +270,6 @@ function buildOfflineResult(query) {
 
   return {
     translation: `${query} (English)`,
-    explanationZh: "离线演示模式下，中文输入会优先给出英文释义，便于快速查词。",
     badge: "离线演示",
     tone: "",
   };
@@ -358,7 +354,6 @@ async function runSearch(rawQuery) {
       : buildOfflineResult(query);
 
     elements.translationText.textContent = result.translation;
-    elements.explanationText.textContent = result.explanationZh ?? "";
 
     setVisible("success");
     renderBadge(result.badge ?? "AI 已返回", result.tone ?? "success");
@@ -371,20 +366,23 @@ async function testConnection() {
   const config = getModeConfig();
 
   if (config.missing.length > 0) {
-    showError("连通性测试失败", `请先补全：${config.missing.join("、")}。`);
+    const message = `请先补全：${config.missing.join("、")}。`;
+    elements.settingsHelperText.textContent = `连通性测试失败：${message}`;
+    showError("连通性测试失败", message);
     return;
   }
 
   if (!state.runtime.isTauri) {
     setVisible("success");
     elements.translationText.textContent = "浏览器预览模式";
-    elements.explanationText.textContent = "当前仅启用离线演示结果；切换到 Tauri 桌面模式后即可测试真实 AI 服务。";
+    elements.settingsHelperText.textContent = "当前仅启用离线演示结果；切换到 Tauri 桌面模式后即可测试真实 AI 服务。";
     renderBadge("浏览器预览", "");
     return;
   }
 
   setVisible("loading");
   renderBadge("测试连接");
+  elements.settingsHelperText.textContent = "正在测试服务连通性，不验证模型生成能力。";
 
   try {
     await invoke("test_connection", {
@@ -398,10 +396,12 @@ async function testConnection() {
     });
     setVisible("success");
     elements.translationText.textContent = "连接正常";
-    elements.explanationText.textContent = `已连通 ${config.serviceEndpoint}，系统会自动补全 /v1。本次仅测试服务连通性，不验证模型生成能力。`;
+    elements.settingsHelperText.textContent = `连接正常：已连通 ${config.serviceEndpoint}，系统会自动补全 /v1。本次仅测试服务连通性，不验证模型生成能力。`;
     renderBadge("AI 已连接", "success");
   } catch (error) {
-    showError("连通性测试失败", error instanceof Error ? error.message : String(error));
+    const message = error instanceof Error ? error.message : String(error);
+    elements.settingsHelperText.textContent = `连通性测试失败：${message}`;
+    showError("连通性测试失败", message);
   }
 }
 

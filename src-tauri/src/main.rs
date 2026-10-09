@@ -21,7 +21,6 @@ struct TranslateRequest {
 #[serde(rename_all = "camelCase")]
 struct TranslateResponse {
   translation: String,
-  explanation_zh: String,
 }
 
 fn show_main_window(app: &tauri::AppHandle) {
@@ -45,21 +44,15 @@ fn detect_language(text: &str) -> &str {
   }
 }
 
-fn build_prompt(query: &str, source_lang: &str) -> String {
+fn build_prompt(source_lang: &str) -> String {
   let direction = if source_lang == "zh" {
-    "中文 -> 英文"
+    "Chinese to English"
   } else {
-    "英文 -> 中文"
+    "English to Chinese"
   };
 
   format!(
-    "You are a concise bilingual dictionary assistant.\n\
-Input direction: {direction}.\n\
-Return JSON only with exactly these keys: translation, explanationZh.\n\
-translation must be the target-language output.\n\
-explanationZh must be short Chinese, at most 2 sentences.\n\
-If the input is ambiguous, choose the most common meaning.\n\
-Input: {query}"
+    "Translate {direction}. Return only the most common translation as plain text, no explanation or JSON."
   )
 }
 
@@ -81,11 +74,11 @@ fn build_chat_completions_url(endpoint: &str) -> String {
   format!("{}/chat/completions", normalize_base_endpoint(endpoint))
 }
 
-fn strip_code_fence(text: &str) -> &str {
+fn strip_code_fence(text: &str) -> Result<&str, String> {
   let trimmed = text.trim();
 
   if !trimmed.starts_with("```") {
-    return trimmed;
+    return Ok(trimmed);
   }
 
   let without_open = trimmed
@@ -94,13 +87,11 @@ fn strip_code_fence(text: &str) -> &str {
     .or_else(|| trimmed.strip_prefix("```"))
     .unwrap_or(trimmed);
 
-  let without_open = without_open.trim_start_matches(['\r', '\n']);
-
-  if let Some(end) = without_open.rfind("```") {
-    &without_open[..end]
-  } else {
-    without_open
-  }
+  without_open
+    .strip_suffix("```")
+    .map(str::trim)
+    .filter(|text| !text.contains("```"))
+    .ok_or_else(|| "AI 返回格式异常：代码块不完整。".to_string())
 }
 
 fn extract_text_from_value(value: &Value) -> Option<String> {
@@ -112,6 +103,9 @@ fn extract_text_from_value(value: &Value) -> Option<String> {
     let mut collected = String::new();
 
     for part in parts {
+      if matches!(part.get("type").and_then(Value::as_str), Some("reasoning" | "thinking")) {
+        continue;
+      }
       if let Some(text) = part.get("text").and_then(Value::as_str) {
         collected.push_str(text);
       } else if let Some(text) = part.get("content").and_then(Value::as_str) {
@@ -151,53 +145,50 @@ fn extract_assistant_text(body: &Value) -> Option<String> {
 }
 
 fn parse_translation_response(content: &str) -> Result<TranslateResponse, String> {
-  let cleaned = strip_code_fence(content);
-
-  if let Ok(value) = serde_json::from_str::<Value>(cleaned) {
-    if let Some(translation) = value.get("translation").and_then(Value::as_str) {
-      let explanation_zh = value
-        .get("explanationZh")
-        .or_else(|| value.get("explanation_zh"))
-        .or_else(|| value.get("explanation"))
-        .and_then(Value::as_str)
-        .unwrap_or("")
-        .trim()
-        .to_string();
-
-      return Ok(TranslateResponse {
-        translation: translation.trim().to_string(),
-        explanation_zh,
-      });
-    }
+  let cleaned = strip_code_fence(content)?;
+  if cleaned.is_empty() {
+    return Err("AI 返回内容为空。".to_string());
   }
 
-  let lines: Vec<&str> = cleaned
-    .lines()
-    .map(str::trim)
-    .filter(|line| !line.is_empty())
-    .collect();
+  if cleaned.contains("<think>") || cleaned.contains("</think>") {
+    return Err("AI 返回了思考内容，而非完整翻译。".to_string());
+  }
 
-  let Some(first_line) = lines.first() else {
-    return Err("AI 返回内容为空。".to_string());
-  };
-
-  let translation = first_line
-    .strip_prefix("translation:")
-    .or_else(|| first_line.strip_prefix("Translation:"))
-    .unwrap_or(first_line)
-    .trim()
-    .to_string();
-
-  let explanation_zh = if lines.len() > 1 {
-    lines[1..].join(" ")
+  let parsed = serde_json::from_str::<Value>(cleaned);
+  let json_like = cleaned.starts_with(['{', '[', '"'])
+    || cleaned.starts_with("translation:")
+    || cleaned.starts_with("'translation'")
+    || cleaned.contains("\"translation\"")
+    || cleaned.contains("\n{")
+    || cleaned.ends_with('}')
+    || content.trim_start().starts_with("```json")
+    || content.trim_start().starts_with("```JSON");
+  let translation = if json_like || matches!(&parsed, Ok(Value::Object(_) | Value::Array(_))) {
+    let value = parsed.map_err(|_| "AI 返回格式异常：翻译 JSON 不完整或无效。".to_string())?;
+    value.get("translation")
+      .and_then(Value::as_str)
+      .ok_or_else(|| "AI 返回格式异常：缺少有效的 translation 字段。".to_string())?
+      .trim()
+      .to_string()
   } else {
-    String::new()
+    cleaned.to_string()
   };
 
-  Ok(TranslateResponse {
-    translation,
-    explanation_zh,
-  })
+  if translation.is_empty() {
+    return Err("AI 返回的翻译为空。".to_string());
+  }
+  if translation.contains("<think>") || translation.contains("</think>") {
+    return Err("AI 返回了思考内容，而非完整翻译。".to_string());
+  }
+  Ok(TranslateResponse { translation })
+}
+
+fn parse_chat_response(body: &Value) -> Result<TranslateResponse, String> {
+  if body.pointer("/choices/0/finish_reason").and_then(Value::as_str) == Some("length") {
+    return Err("AI 返回内容被截断，请调整模型配置后重试。".to_string());
+  }
+  let content = extract_assistant_text(body).ok_or_else(|| "AI 返回内容为空。".to_string())?;
+  parse_translation_response(&content)
 }
 
 fn summarize_error_body(body: &str) -> String {
@@ -308,7 +299,7 @@ async fn translate_text(request: TranslateRequest) -> Result<TranslateResponse, 
   }
 
   let source_lang = detect_language(&request.query);
-  let prompt = build_prompt(&request.query, source_lang);
+  let prompt = build_prompt(source_lang);
   let client = build_client(&request.provider)?;
   let headers = build_headers(&request.provider, api_key)?;
   let payload = serde_json::json!({
@@ -352,14 +343,183 @@ async fn translate_text(request: TranslateRequest) -> Result<TranslateResponse, 
 
   let body: Value =
     serde_json::from_str(&body_text).map_err(|error| format!("AI 响应不是有效 JSON：{error}"))?;
-  let content = extract_assistant_text(&body).ok_or_else(|| "AI 返回内容为空。".to_string())?;
-
-  parse_translation_response(&content)
+  parse_chat_response(&body)
 }
 
 #[cfg(test)]
 mod tests {
   use super::*;
+
+  #[test]
+  fn prompt_requests_only_translation_in_the_target_language() {
+    let chinese_prompt = build_prompt("zh");
+    let english_prompt = build_prompt("en");
+    assert!(chinese_prompt.contains("Chinese to English"));
+    assert!(english_prompt.contains("English to Chinese"));
+    assert!(chinese_prompt.contains("plain text, no explanation or JSON"));
+    assert!(!chinese_prompt.contains("explanationZh"));
+  }
+
+  #[test]
+  fn plain_translation_is_preserved_and_response_has_only_translation() {
+    for content in [" Desktop tool ", "你好", "第一行\n第二行", "2026"] {
+      let response = parse_translation_response(content).unwrap();
+      assert_eq!(response.translation, content.trim());
+      assert_eq!(
+        serde_json::to_value(response).unwrap(),
+        serde_json::json!({ "translation": content.trim() })
+      );
+    }
+  }
+
+  #[test]
+  fn legacy_json_extracts_only_translation() {
+    for content in [
+      r#"{"translation":" Desktop tool ","explanationZh":"中文说明"}"#,
+      r#"{"translation":" Desktop tool "}"#,
+      "```json\n{\"translation\":\" Desktop tool \"}\n```",
+      "```JSON\r\n{\"translation\":\" Desktop tool \"}\r\n```",
+      "```\n{\"translation\":\" Desktop tool \"}\n```",
+    ] {
+      let response = parse_translation_response(content).unwrap();
+      assert_eq!(
+        serde_json::to_value(response).unwrap(),
+        serde_json::json!({ "translation": "Desktop tool" })
+      );
+    }
+  }
+
+  #[test]
+  fn malformed_json_never_falls_back_to_raw_translation() {
+    for content in [
+      r#"{translation:Desktop tool, explanationZh:中文说明}"#,
+      r#"{"translation":"Desktop tool","explanationZh":"中文说明""#,
+      r#"{"translation":"Desktop"#,
+      "{\n\"translation\": \"Desktop tool\",\n}",
+      "```json\n{\"translation\":\"Desktop tool\"}",
+      "```json\nDesktop tool\n```",
+      "```json\n{\"translation\":\"Desktop tool\"}\n``` trailing",
+      "Here is the translation:\n{\"translation\":\"Desktop tool\"",
+      "translation: Desktop tool",
+      r#""translation": "Desktop tool""#,
+      r#"{"translation":"Desktop tool"} extra"#,
+    ] {
+      assert!(parse_translation_response(content).is_err(), "accepted malformed JSON: {content}");
+    }
+  }
+
+  #[test]
+  fn invalid_or_empty_translation_is_rejected() {
+    for content in [
+      "", " \n ", "```json\n\n```", "{}",
+      r#"{"explanationZh":"只有说明"}"#,
+      r#"{"translation":""}"#,
+      r#"{"translation":" \n "}"#,
+      r#"{"translation":null}"#,
+      r#"{"translation":42}"#,
+      r#"[{"translation":"Desktop tool"}]"#,
+    ] {
+      assert!(parse_translation_response(content).is_err(), "accepted invalid translation: {content}");
+    }
+  }
+
+  #[test]
+  fn thinking_is_not_translation() {
+    for content in [
+      "<think>reasoning</think>Desktop tool",
+      "<think>unfinished reasoning",
+      "reasoning</think>Desktop tool",
+      r#"{"translation":"<think>reasoning</think>Desktop tool"}"#,
+    ] {
+      assert!(parse_translation_response(content).is_err());
+    }
+    let reasoning_only = serde_json::json!({
+      "choices": [{ "message": { "content": "", "reasoning": "Desktop tool" }, "finish_reason": "stop" }]
+    });
+    assert!(parse_chat_response(&reasoning_only).is_err());
+    let parts = serde_json::json!({
+      "choices": [{ "message": { "content": [
+        { "type": "reasoning", "text": "internal reasoning" },
+        { "type": "text", "text": "Desktop tool" }
+      ] }, "finish_reason": "stop" }]
+    });
+    assert_eq!(parse_chat_response(&parts).unwrap().translation, "Desktop tool");
+  }
+
+  #[test]
+  fn truncated_completion_is_rejected_even_when_content_looks_valid() {
+    for content in ["Desktop tool", r#"{"translation":"Desktop tool"}"#, ""] {
+      let body = serde_json::json!({
+        "choices": [{ "message": { "content": content }, "finish_reason": "length" }]
+      });
+      assert!(parse_chat_response(&body).unwrap_err().contains("截断"));
+    }
+  }
+
+  #[test]
+  fn local_translation_uses_short_prompt_and_typed_response() {
+    use std::io::{Read, Write};
+    use std::net::TcpListener;
+
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let endpoint = format!("http://{}", listener.local_addr().unwrap());
+    let server = std::thread::spawn(move || {
+      let (mut stream, _) = listener.accept().unwrap();
+      stream.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+      let mut request = Vec::new();
+      let mut buffer = [0; 4096];
+      let payload = loop {
+        let count = stream.read(&mut buffer).unwrap();
+        assert!(count > 0, "request ended before body");
+        request.extend_from_slice(&buffer[..count]);
+        if let Some(header_end) = request.windows(4).position(|bytes| bytes == b"\r\n\r\n") {
+          let headers = String::from_utf8_lossy(&request[..header_end]);
+          assert!(headers.starts_with("POST /v1/chat/completions "));
+          let length: usize = headers.lines().find_map(|line| {
+            let (name, value) = line.split_once(':')?;
+            name.eq_ignore_ascii_case("content-length").then(|| value.trim().parse().unwrap())
+          }).unwrap();
+          if request.len() >= header_end + 4 + length {
+            break serde_json::from_slice::<Value>(&request[header_end + 4..header_end + 4 + length]).unwrap();
+          }
+        }
+      };
+      assert_eq!(payload["messages"][0]["content"], build_prompt("zh"));
+      assert_eq!(payload["messages"][1]["content"], "桌面工具");
+      assert_eq!(payload["stream"], false);
+      assert_eq!(payload["max_tokens"], 160);
+      let body = r#"{"choices":[{"message":{"content":"Desktop tool"},"finish_reason":"stop"}]}"#;
+      write!(stream, "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}", body.len(), body).unwrap();
+    });
+    let response = tauri::async_runtime::block_on(translate_text(TranslateRequest {
+      query: "桌面工具".to_string(),
+      provider: "local".to_string(),
+      service_endpoint: endpoint,
+      model_name: "test-model".to_string(),
+      api_key: String::new(),
+    })).unwrap();
+    assert_eq!(response.translation, "Desktop tool");
+    server.join().unwrap();
+  }
+
+  #[test]
+  #[ignore = "Requires DICTIONARY_TEST_ENDPOINT and a thinking model that exhausts 160 tokens"]
+  fn configured_thinking_model_reports_truncation_not_translation() {
+    let endpoint = std::env::var("DICTIONARY_TEST_ENDPOINT").unwrap();
+    let model = std::env::var("DICTIONARY_TEST_MODEL").unwrap();
+    for query in ["桌面工具", "hello"] {
+      let result = tauri::async_runtime::block_on(translate_text(TranslateRequest {
+        query: query.to_string(),
+        provider: "local".to_string(),
+        service_endpoint: endpoint.clone(),
+        model_name: model.clone(),
+        api_key: String::new(),
+      }));
+      let error = result.unwrap_err();
+      println!("{query}: {error}");
+      assert!(error.contains("截断"), "unexpected error: {error}");
+    }
+  }
 
   #[test]
   fn local_client_reaches_models_endpoint() {

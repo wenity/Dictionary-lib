@@ -286,13 +286,11 @@ button {
 }
 
 .translation-text,
-.explanation-text,
 .meta-grid strong {
   margin-bottom: 0;
 }
 
-.translation-card,
-.explain-card {
+.translation-card {
   margin-top: 16px;
   padding: 16px;
   border-radius: 18px;
@@ -304,11 +302,6 @@ button {
   font-size: clamp(28px, 4vw, 40px);
   font-weight: 700;
   color: #f8fafc;
-}
-
-.explanation-text {
-  color: #cbd5e1;
-  line-height: 1.7;
 }
 
 .meta-grid {
