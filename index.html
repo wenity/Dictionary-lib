@@ -116,14 +116,8 @@
               <input id="serviceEndpoint" type="text" value="http://localhost:11434/v1" />
             </label>
             <label class="full">
-              <div class="field-row">
-                <span>模型名称</span>
-                <button id="refreshModelsBtn" type="button" class="secondary-btn compact-btn">刷新列表</button>
-              </div>
-              <select id="modelNameSelect" class="settings-select">
-                <option value="qwen2.5:7b-instruct">qwen2.5:7b-instruct</option>
-              </select>
-              <p id="modelStatusText" class="field-note">打开设置后会自动拉取真实可用模型。</p>
+              <span>模型名称（手动填写）</span>
+              <input id="modelName" type="text" value="qwen2.5:7b-instruct" />
             </label>
             <label class="full">
               <span>API Key</span>
@@ -135,7 +129,7 @@
             <button type="button" id="testBtn" class="primary-btn">测试连通性</button>
           </div>
 
-          <p id="settingsHelperText" class="helper-text">当前模式会调用 OpenAI 兼容接口，系统会自动补全 /v1。快捷键为 Ctrl / ⌘ + K。</p>
+          <p id="settingsHelperText" class="helper-text">当前模式会调用 OpenAI 兼容接口，系统会自动补全 /v1；模型名称请手动填写。连通性测试不验证模型生成能力。快捷键为 Ctrl / ⌘ + K。</p>
         </div>
       </section>
     </div>

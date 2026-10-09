@@ -71,11 +71,8 @@ const elements = {
   closeSettingsBtn: document.getElementById("closeSettingsBtn"),
   serviceEndpoint:
     document.getElementById("serviceEndpoint") ?? document.getElementById("localEndpoint"),
-  modelNameSelect:
-    document.getElementById("modelNameSelect") ?? document.getElementById("modelName"),
+  modelName: document.getElementById("modelName"),
   apiKey: document.getElementById("apiKey"),
-  refreshModelsBtn: document.getElementById("refreshModelsBtn"),
-  modelStatusText: document.getElementById("modelStatusText"),
   modeBadge: document.getElementById("modeBadge"),
   providerText: document.getElementById("providerText"),
   settingsHelperText: document.getElementById("settingsHelperText"),
@@ -95,7 +92,6 @@ const state = {
   runtime: {
     isTauri: false,
   },
-  modelLoadRequestId: 0,
 };
 
 function readSavedSettings() {
@@ -135,7 +131,7 @@ function writeSavedSettings() {
     provider: state.provider,
     serviceEndpoint: elements.serviceEndpoint.value.trim(),
     localEndpoint: elements.serviceEndpoint.value.trim(),
-    modelName: elements.modelNameSelect.value.trim(),
+    modelName: elements.modelName.value.trim(),
     apiKey: elements.apiKey.value.trim(),
   };
 
@@ -221,8 +217,8 @@ function updateSettingsHelperText() {
 
   elements.settingsHelperText.textContent =
     state.provider === "local"
-      ? "本地模式会调用你填写的 OpenAI 兼容服务地址，系统会自动补全 /v1，并拉取真实可用模型。快捷键为 Ctrl / ⌘ + K。"
-      : "API Key 模式会把同一服务地址作为云端模型入口，系统会自动补全 /v1，并拉取真实可用模型。快捷键为 Ctrl / ⌘ + K。";
+      ? "本地模式会调用你填写的 OpenAI 兼容服务地址，系统会自动补全 /v1；模型名称请手动填写。连通性测试不验证模型生成能力。快捷键为 Ctrl / ⌘ + K。"
+      : "API Key 模式会把同一服务地址作为云端模型入口，系统会自动补全 /v1；模型名称请手动填写。连通性测试不验证模型生成能力。快捷键为 Ctrl / ⌘ + K。";
 }
 
 function updateSettingsPanel(open) {
@@ -232,7 +228,7 @@ function updateSettingsPanel(open) {
 
 function getModeConfig() {
   const serviceEndpoint = elements.serviceEndpoint.value.trim();
-  const modelName = elements.modelNameSelect.value.trim() || DEFAULT_MODEL_NAME;
+  const modelName = elements.modelName.value.trim() || DEFAULT_MODEL_NAME;
   const apiKey = elements.apiKey.value.trim();
   const missing = [];
 
@@ -251,52 +247,6 @@ function getModeConfig() {
     apiKey,
     missing,
   };
-}
-
-function updateModelStatus(message, tone = "") {
-  if (!elements.modelStatusText) {
-    return;
-  }
-
-  elements.modelStatusText.textContent = message;
-  elements.modelStatusText.dataset.tone = tone;
-}
-
-function renderModelOptions(models, selectedModel) {
-  const select = elements.modelNameSelect;
-  const normalizedSelected = selectedModel.trim();
-  const uniqueModels = [...new Set(models.map((item) => item.trim()).filter(Boolean))];
-
-  select.replaceChildren();
-
-  if (uniqueModels.length === 0) {
-    const placeholder = document.createElement("option");
-    placeholder.value = normalizedSelected || DEFAULT_MODEL_NAME;
-    placeholder.textContent = "暂无可用模型";
-    placeholder.selected = true;
-    select.append(placeholder);
-    select.disabled = true;
-    return;
-  }
-
-  const values = [...uniqueModels];
-
-  if (normalizedSelected && !values.includes(normalizedSelected)) {
-    values.unshift(normalizedSelected);
-  }
-
-  values.forEach((model) => {
-    const option = document.createElement("option");
-    option.value = model;
-    option.textContent =
-      model === normalizedSelected && !uniqueModels.includes(normalizedSelected)
-        ? `${model}（当前已保存）`
-        : model;
-    select.append(option);
-  });
-
-  select.disabled = false;
-  select.value = normalizedSelected || values[0];
 }
 
 function buildOfflineResult(query) {
@@ -329,69 +279,6 @@ function buildOfflineResult(query) {
   };
 }
 
-async function loadAvailableModels({ force = false } = {}) {
-  if (!state.runtime.isTauri) {
-    const savedModel = readSavedSettings().modelName || DEFAULT_MODEL_NAME;
-    renderModelOptions([savedModel], savedModel);
-    updateModelStatus("浏览器预览仅保留当前模型值；切换到桌面模式后可拉取真实模型列表。", "");
-    return;
-  }
-
-  const requestId = ++state.modelLoadRequestId;
-  const selectedModel = elements.modelNameSelect.value.trim() || readSavedSettings().modelName || DEFAULT_MODEL_NAME;
-
-  if (!force && elements.modelStatusText?.dataset.tone === "loading") {
-    return;
-  }
-
-  updateModelStatus("正在拉取真实可用模型列表...", "loading");
-  if (elements.refreshModelsBtn) {
-    elements.refreshModelsBtn.disabled = true;
-  }
-
-  try {
-    const config = getModeConfig();
-    const models = await invoke("list_models", {
-      request: {
-        query: "",
-        provider: config.provider,
-        serviceEndpoint: config.serviceEndpoint,
-        modelName: config.modelName,
-        apiKey: config.apiKey,
-      },
-    });
-
-    if (requestId !== state.modelLoadRequestId) {
-      return;
-    }
-
-    renderModelOptions(models, selectedModel);
-
-    if (models.includes(selectedModel)) {
-      updateModelStatus(`已加载 ${models.length} 个可用模型。`, "success");
-    } else {
-      updateModelStatus(`已加载 ${models.length} 个可用模型；当前保存的模型不在列表中。`, "warning");
-    }
-
-    syncSavedSettings();
-  } catch (error) {
-    if (requestId !== state.modelLoadRequestId) {
-      return;
-    }
-
-    const message = error instanceof Error ? error.message : String(error);
-    updateModelStatus(`加载模型列表失败：${message}`, "error");
-
-    if (!elements.modelNameSelect.options.length) {
-      renderModelOptions([selectedModel], selectedModel);
-    }
-  } finally {
-    if (requestId === state.modelLoadRequestId && elements.refreshModelsBtn) {
-      elements.refreshModelsBtn.disabled = false;
-    }
-  }
-}
-
 async function requestDesktopTranslation(query) {
   const config = getModeConfig();
 
@@ -410,7 +297,7 @@ function applySavedSettings() {
   const settings = readSavedSettings();
 
   elements.serviceEndpoint.value = settings.serviceEndpoint;
-  elements.modelNameSelect.value = settings.modelName;
+  elements.modelName.value = settings.modelName;
   elements.apiKey.value = settings.apiKey;
   setProvider(settings.provider, { persist: false });
 }
@@ -511,9 +398,8 @@ async function testConnection() {
     });
     setVisible("success");
     elements.translationText.textContent = "连接正常";
-    elements.explanationText.textContent = `已连通 ${config.serviceEndpoint}，系统会自动补全 /v1。`;
+    elements.explanationText.textContent = `已连通 ${config.serviceEndpoint}，系统会自动补全 /v1。本次仅测试服务连通性，不验证模型生成能力。`;
     renderBadge("AI 已连接", "success");
-    updateModelStatus("连通性正常，模型列表可用。", "success");
   } catch (error) {
     showError("连通性测试失败", error instanceof Error ? error.message : String(error));
   }
@@ -527,17 +413,12 @@ elements.form.addEventListener("submit", (event) => {
 elements.providerTabs.forEach((tab) => {
   tab.addEventListener("click", () => {
     setProvider(tab.dataset.provider);
-    void loadAvailableModels({ force: true });
   });
 });
 
 elements.testBtn.addEventListener("click", testConnection);
-elements.refreshModelsBtn?.addEventListener("click", () => {
-  void loadAvailableModels({ force: true });
-});
 elements.settingsBtn.addEventListener("click", () => {
   updateSettingsPanel(true);
-  void loadAvailableModels();
 });
 
 elements.closeSettingsBtn.addEventListener("click", () => {
@@ -552,16 +433,8 @@ elements.input.addEventListener("keydown", (event) => {
   }
 });
 
-[elements.serviceEndpoint, elements.modelNameSelect, elements.apiKey].forEach((field) => {
+[elements.serviceEndpoint, elements.modelName, elements.apiKey].forEach((field) => {
   field.addEventListener("input", syncSavedSettings);
-});
-
-[elements.serviceEndpoint, elements.apiKey].forEach((field) => {
-  field.addEventListener("change", () => {
-    if (state.runtime.isTauri && !elements.settingsPanel.classList.contains("hidden")) {
-      void loadAvailableModels({ force: true });
-    }
-  });
 });
 
 document.addEventListener("keydown", (event) => {
@@ -588,7 +461,6 @@ async function bootstrap() {
   updateRuntimeBadge();
   updateSettingsHelperText();
   await setupDesktopRuntime();
-  void loadAvailableModels();
 
   window.setTimeout(() => {
     elements.input.focus();

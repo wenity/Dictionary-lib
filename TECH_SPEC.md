@@ -21,7 +21,7 @@
 - 构建工具：Vite
 - 配置持久化：本地配置文件 + 系统安全存储
 
-当前 demo 已按 **Vite + Tauri** 骨架整理，前端入口由 `src/main.js` 统一加载页面与样式，Rust 入口位于 `src-tauri/src/main.rs`。当前桌面端通过 `invoke("translate_text")` 调用 Rust 侧 AI 命令，再访问 OpenAI 兼容 HTTP 接口；浏览器预览保留离线示例兜底，设置页统一管理服务地址、模型名称与 API Key。模型名称现在通过真实模型列表下拉选择，服务地址只需要填写基础地址，运行时会自动补全 `/v1`。
+当前 demo 已按 **Vite + Tauri** 骨架整理，前端入口由 `src/main.js` 统一加载页面与样式，Rust 入口位于 `src-tauri/src/main.rs`。当前桌面端通过 `invoke("translate_text")` 调用 Rust 侧 AI 命令，再访问 OpenAI 兼容 HTTP 接口；浏览器预览保留离线示例兜底，设置页统一管理服务地址、模型名称与 API Key。模型名称由用户手动填写并读取已保存值，服务地址只需要填写基础地址，运行时会自动补全 `/v1`。
 
 ### 2.2 选择理由
 
@@ -130,9 +130,9 @@ interface AiProvider {
 - `LocalModelProvider`
 - `ApiKeyProvider`
 
-当前实现可直接复用同一套 OpenAI 兼容 `chat/completions` 请求，只在 Rust 侧的服务地址和鉴权头上区分本地与云端配置；连通性测试则改为请求 `/models`，避免被模型名影响。
+当前实现可直接复用同一套 OpenAI 兼容 `chat/completions` 请求，只在 Rust 侧的服务地址和鉴权头上区分本地与云端配置；连通性测试保持请求 `GET /v1/models`，仅检查服务响应，不解析模型列表、不验证模型名称或生成能力。生成能力需通过实际翻译查询验证，浏览器预览不发起真实连通性请求。
 
-模型选择流程改为：启动或打开设置页时请求 `/models`，将返回结果填入下拉框；若当前保存的模型不在列表中，则临时保留该值并提示用户切换到真实可用模型。
+设置页通过 `modelName` 文本输入框手动填写模型名称；启动时从 localStorage 读取已保存的模型名，输入变更时保存。未保存有效值时沿用默认模型 `qwen2.5:7b-instruct`。不再提供模型列表获取命令、下拉框、刷新按钮或列表状态；启动、打开设置页、切换来源以及修改地址或 API Key 均不会触发模型列表请求。
 
 ### 5.4 稳定数据结构规范
 
