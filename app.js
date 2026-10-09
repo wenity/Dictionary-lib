@@ -217,8 +217,8 @@ function updateSettingsHelperText() {
 
   elements.settingsHelperText.textContent =
     state.provider === "local"
-      ? "本地模式会调用你填写的 OpenAI 兼容服务地址，常见于 Ollama / LM Studio。快捷键为 Ctrl / ⌘ + K。"
-      : "API Key 模式会把同一服务地址作为云端模型入口，并附带授权信息。快捷键为 Ctrl / ⌘ + K。";
+      ? "本地模式会调用你填写的 OpenAI 兼容服务地址，系统会自动补全 /v1。常见于 Ollama / LM Studio。快捷键为 Ctrl / ⌘ + K。"
+      : "API Key 模式会把同一服务地址作为云端模型入口，系统会自动补全 /v1 并附带授权信息。快捷键为 Ctrl / ⌘ + K。";
 }
 
 function updateSettingsPanel(open) {
@@ -387,11 +387,18 @@ async function testConnection() {
   renderBadge("测试连接");
 
   try {
-    await requestDesktopTranslation("connection test");
+    await invoke("test_connection", {
+      request: {
+        query: "connection test",
+        provider: config.provider,
+        serviceEndpoint: config.serviceEndpoint,
+        modelName: config.modelName,
+        apiKey: config.apiKey,
+      },
+    });
     setVisible("success");
     elements.translationText.textContent = "连接正常";
-    elements.explanationText.textContent =
-      `已连通 ${config.serviceEndpoint}，当前模型：${config.modelName}。`;
+    elements.explanationText.textContent = `已连通 ${config.serviceEndpoint}，系统会自动补全 /v1。`;
     renderBadge("AI 已连接", "success");
   } catch (error) {
     showError("连通性测试失败", error instanceof Error ? error.message : String(error));

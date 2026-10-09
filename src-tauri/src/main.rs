@@ -63,8 +63,22 @@ Input: {query}"
   )
 }
 
-fn normalize_endpoint(endpoint: &str) -> String {
-  endpoint.trim().trim_end_matches('/').to_string()
+fn normalize_base_endpoint(endpoint: &str) -> String {
+  let trimmed = endpoint.trim().trim_end_matches('/');
+
+  if trimmed.ends_with("/v1") {
+    trimmed.to_string()
+  } else {
+    format!("{trimmed}/v1")
+  }
+}
+
+fn build_models_url(endpoint: &str) -> String {
+  format!("{}/models", normalize_base_endpoint(endpoint))
+}
+
+fn build_chat_completions_url(endpoint: &str) -> String {
+  format!("{}/chat/completions", normalize_base_endpoint(endpoint))
 }
 
 fn strip_code_fence(text: &str) -> &str {
@@ -195,6 +209,75 @@ fn summarize_error_body(body: &str) -> String {
   format!("{}...", &trimmed[..180])
 }
 
+fn build_client() -> Result<reqwest::Client, String> {
+  reqwest::Client::builder()
+    .timeout(Duration::from_secs(30))
+    .build()
+    .map_err(|error| format!("初始化 AI 请求失败：{error}"))
+}
+
+fn build_headers(provider: &str, api_key: &str) -> Result<HeaderMap, String> {
+  let mut headers = HeaderMap::new();
+  headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
+
+  if provider == "api" {
+    let token = format!("Bearer {api_key}");
+    headers.insert(
+      AUTHORIZATION,
+      HeaderValue::from_str(&token).map_err(|error| format!("API Key 格式无效：{error}"))?,
+    );
+  }
+
+  Ok(headers)
+}
+
+async fn send_get_request(endpoint: &str, provider: &str, api_key: &str) -> Result<String, String> {
+  let client = build_client()?;
+  let headers = build_headers(provider, api_key)?;
+  let response = client
+    .get(build_models_url(endpoint))
+    .headers(headers)
+    .send()
+    .await
+    .map_err(|error| format!("请求 AI 服务失败：{error}"))?;
+
+  let status = response.status();
+  let body_text = response
+    .text()
+    .await
+    .map_err(|error| format!("读取 AI 响应失败：{error}"))?;
+
+  if !status.is_success() {
+    return Err(format!(
+      "AI 服务返回 {}：{}",
+      status,
+      summarize_error_body(&body_text)
+    ));
+  }
+
+  Ok(body_text)
+}
+
+#[tauri::command]
+async fn test_connection(request: TranslateRequest) -> Result<String, String> {
+  let service_endpoint = request.service_endpoint.trim();
+  if service_endpoint.is_empty() {
+    return Err("请先补全模型服务地址。".to_string());
+  }
+
+  let api_key = request.api_key.trim();
+  if request.provider == "api" && api_key.is_empty() {
+    return Err("请先填写 API Key。".to_string());
+  }
+
+  if request.provider != "local" && request.provider != "api" {
+    return Err("不支持的 AI 来源配置。".to_string());
+  }
+
+  let _ = send_get_request(service_endpoint, &request.provider, api_key).await?;
+  Ok("连接正常".to_string())
+}
+
 #[tauri::command]
 async fn translate_text(request: TranslateRequest) -> Result<TranslateResponse, String> {
   let service_endpoint = request.service_endpoint.trim();
@@ -219,22 +302,8 @@ async fn translate_text(request: TranslateRequest) -> Result<TranslateResponse, 
 
   let source_lang = detect_language(&request.query);
   let prompt = build_prompt(&request.query, source_lang);
-  let client = reqwest::Client::builder()
-    .timeout(Duration::from_secs(30))
-    .build()
-    .map_err(|error| format!("初始化 AI 请求失败：{error}"))?;
-
-  let mut headers = HeaderMap::new();
-  headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
-
-  if request.provider == "api" {
-    let token = format!("Bearer {api_key}");
-    headers.insert(
-      AUTHORIZATION,
-      HeaderValue::from_str(&token).map_err(|error| format!("API Key 格式无效：{error}"))?,
-    );
-  }
-
+  let client = build_client()?;
+  let headers = build_headers(&request.provider, api_key)?;
   let payload = serde_json::json!({
     "model": model_name,
     "messages": [
@@ -252,9 +321,8 @@ async fn translate_text(request: TranslateRequest) -> Result<TranslateResponse, 
     "stream": false
   });
 
-  let endpoint = normalize_endpoint(service_endpoint);
   let response = client
-    .post(format!("{endpoint}/chat/completions"))
+    .post(build_chat_completions_url(service_endpoint))
     .headers(headers)
     .json(&payload)
     .send()
@@ -284,7 +352,7 @@ async fn translate_text(request: TranslateRequest) -> Result<TranslateResponse, 
 
 fn main() {
   tauri::Builder::default()
-    .invoke_handler(tauri::generate_handler![translate_text])
+    .invoke_handler(tauri::generate_handler![test_connection, translate_text])
     .on_window_event(|event| {
       if let WindowEvent::CloseRequested { api, .. } = event.event() {
         api.prevent_close();
